@@ -1,0 +1,31 @@
+Domain Model:
+\\\\\\\\\\\
+TODO
+TODO belongs to Category 
+
+
+Category:
+   
+////////////
+Reposyiry for TODO (TODORepository) - Interface
+Repository Category (CategoryRepository) - Interface
+
+
+
+Persistance:
+    
+
+
+
+handler(controller> programming) => persistance layer (Repository)=> Domain model 
+
+
+
+
+printer HP => 
+            
+            abstarction:
+
+                        driver 1
+
+                        driver 2 
