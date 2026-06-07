@@ -1,25 +1,29 @@
 package main
 
 import (
-	"fmt"
-	"time"
-
+	"log"
+	"net/http"
 	"todolist/memorystore"
-	"todolist/model"
 )
 
 func main() {
 
-	todo := TODOController{
+	todo := &TODOController{
 		store: memorystore.NewTodoMap(),
 	}
-	todo.store.Create(model.TODO{
-		TID:          "1",
-		Activity:     "Going to Shop",
-		Description:  "",
-		CreationDate: time.Now(),
-		IsDone:       false,
-		CategoryID:   "1"})
 
-	fmt.Println(todo.store.GetAll())
+	router := initializeRoutes(todo)
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
+	}
+	log.Println("Listening...")
+	// Run the http server
+	server.ListenAndServe()
+}
+func initializeRoutes(t *TODOController) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/todo", t.Create)
+
+	return mux
 }
