@@ -65,7 +65,7 @@ func (c *CategoryController) GetAll(w http.ResponseWriter, r *http.Request) {
 
 func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	category, err := c.store.GetById(id)
+	category, err := c.store.GetByID(id)
 	if err != nil {
 		fmt.Println("somethings is having issue")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
