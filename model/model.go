@@ -37,8 +37,8 @@ type ToDoRepository interface {
 // abstracts persistance of Category Items
 type CategoryRepository interface {
 	Create(Category) error
-	Update(string, Category) error
+	Update(Category) error
 	Delete(string) error
-	GetById(string) (Category, error)
+	GetByID(string) (Category, error)
 	GetAll() ([]Category, error)
 }
