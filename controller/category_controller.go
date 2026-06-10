@@ -1,18 +1,29 @@
-package main
+package controller
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+
 	"todolist/model"
 )
 
 type CategoryController struct {
-	store model.CategoryRepository
+	store  model.CategoryRepository
+	logger *slog.Logger
+}
+
+func NewCategoryController(store model.CategoryRepository, logger *slog.Logger) *CategoryController {
+
+	return &CategoryController{
+		store:  store,
+		logger: logger,
+	}
 }
 
 func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("request came here")
 	var category model.Category
 	err := json.NewDecoder(r.Body).Decode(&category)
 	if err != nil {
@@ -20,10 +31,11 @@ func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	err = c.store.Create(category)
 	if err != nil {
-		fmt.Println("somethings is having issue")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-
+	//message followed by key value data -> structured logging
+	c.logger.LogAttrs(context.Background(), slog.LevelInfo, "Category has been created",
+		slog.String("created by", "ID [NNED TO CHANGE]"))
 }
 func (c *CategoryController) Update(w http.ResponseWriter, r *http.Request) {
 	var category model.Category

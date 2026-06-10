@@ -3,6 +3,7 @@ package memorystore
 import (
 	"errors"
 	"sync"
+
 	"todolist/model"
 )
 
@@ -62,7 +63,7 @@ func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
 func (c *CategoryMap) GetAll() ([]model.Category, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	category := make([]model.Category, 5)
+	category := make([]model.Category, 0)
 	if len(c.store) == 0 {
 		return nil, errors.New("Store is empty")
 	}

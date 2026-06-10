@@ -1,15 +1,25 @@
-package main
+package controller
 
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+
 	"todolist/model"
 )
 
 type TODOController struct {
 	//property for abstraction
-	store model.ToDoRepository
+	store  model.ToDoRepository
+	logger *slog.Logger
+}
+
+func NewTODOController(store model.ToDoRepository, logger *slog.Logger) *TODOController {
+	return &TODOController{
+		store:  store,
+		logger: logger,
+	}
 }
 
 func (t *TODOController) Create(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +34,7 @@ func (t *TODOController) Create(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("somethings is having issue")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+	w.WriteHeader(http.StatusCreated) //TODO
 
 }
 func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +48,7 @@ func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("somethings is having issue")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-
+	w.WriteHeader(http.StatusNoContent) //Update
 }
 
 func (t *TODOController) Delete(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +58,7 @@ func (t *TODOController) Delete(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("somethings is having issue")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (t *TODOController) GetAll(w http.ResponseWriter, r *http.Request) {
