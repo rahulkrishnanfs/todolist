@@ -67,7 +67,7 @@ func (t *TodoMap) GetById(id string) (model.TODO, error) {
 func (t *TodoMap) GetAll() ([]model.TODO, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	todo := make([]model.TODO, 5)
+	todo := make([]model.TODO, 0)
 	if len(t.store) == 0 {
 		return nil, errors.New("Store is empty")
 	}

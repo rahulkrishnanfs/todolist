@@ -29,3 +29,9 @@ printer HP =>
                         driver 1
 
                         driver 2 
+
+
+
+Full error logging
+Information logging
+fully functional application  
