@@ -1,31 +1,33 @@
 package model
 
-import "time"
+import (
+	"time"
+)
 
 // Database indepdendent (Domain model)
 // Users can track the individual Items
 type TODO struct {
-	TID          string
-	Activity     string
-	Description  string
-	CreationDate time.Time
-	IsDone       bool
-	CategoryID   string
+	TID          string    `json:"tid"`
+	Activity     string    `json:"activity"`
+	Description  string    `json:"description"`
+	CreationDate time.Time `json:"creationdate"`
+	IsDone       bool      `json:"isdone"`
+	CategoryID   string    `json:"cayegoryid"`
 }
 
 // Entity
 // Groups TODO together
 type Category struct {
-	CID         string
-	Description string
-	Name        string
+	CID         string `json:"cid"`
+	Description string `json:"description"`
+	Name        string `json:"name"`
 }
 
 // interface Abstraction
 // Abstracts persistance for TODO Items
 type ToDoRepository interface {
 	Create(TODO) error
-	// Update(string, TODO) error
+	Update(TODO) error
 	Delete(string) error
 	GetById(string) (TODO, error)
 	GetAll() ([]TODO, error)
@@ -35,8 +37,8 @@ type ToDoRepository interface {
 // abstracts persistance of Category Items
 type CategoryRepository interface {
 	Create(Category) error
-	Update(string, Category) error
+	Update(Category) error
 	Delete(string) error
-	GetById(string) (Category, error)
+	GetByID(string) (Category, error)
 	GetAll() ([]Category, error)
 }

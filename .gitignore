@@ -1,0 +1,23 @@
+# Compiled binary
+/todolist
+
+# Go build / test artifacts
+*.exe
+*.test
+*.out
+*.prof
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency dir (if vendoring)
+/vendor/
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Cursor local files
+.cursor/
