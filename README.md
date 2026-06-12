@@ -5,8 +5,8 @@ architecture (ports and adapters). Domain models and persistence are decoupled
 through repository interfaces, so the storage backend can be swapped without
 touching business logic.
 
-Currently the project ships with an in-memory store and a small CLI demo in
-`cmd/main.go`.
+Currently the project ships with an in-memory store and an HTTP REST API
+(`net/http`) served from `cmd/main.go` on port `:8080`.
 
 ## Features
 
@@ -21,14 +21,18 @@ Currently the project ships with an in-memory store and a small CLI demo in
 ```text
 todolist/
 ├── cmd/
-│   ├── main.go               # Entrypoint / CLI demo
-│   ├── todo_controller.go    # TODOController (depends on ToDoRepository)
-│   └── category_controller.go# CategoryController (depends on CategoryRepository)
+│   ├── main.go                 # Entrypoint: wires stores, controllers, routes; starts HTTP server
+│   ├── routes.go               # ToDoRoutes: registers /api/todo/* handlers
+│   └── category_routes.go      # CategoryRoutes: registers /api/category/* handlers
+├── controller/
+│   ├── todo_controller.go      # TODOController (depends on ToDoRepository)
+│   └── category_controller.go  # CategoryController (depends on CategoryRepository)
 ├── memorystore/
-│   └── in_memory.go          # In-memory adapters: TodoMap, CategoryMap
+│   ├── in_memory_todo.go       # In-memory adapter: TodoMap
+│   └── in_memory_category.go   # In-memory adapter: CategoryMap
 ├── model/
-│   └── model.go              # Domain entities + repository interfaces (ports)
-├── go.mod                    # Module: todolist (Go 1.22)
+│   └── model.go                # Domain entities + repository interfaces (ports)
+├── go.mod                      # Module: todolist (Go 1.22)
 └── README.md
 ```
 
@@ -41,14 +45,41 @@ Requirements: Go 1.22+.
 go run ./cmd
 ```
 
-This runs the demo in `cmd/main.go`, which creates an in-memory TODO store,
-adds a sample item, and prints all items.
+This starts the HTTP server in `cmd/main.go`, which wires up the in-memory
+stores, controllers, and routes, then listens on `:8080`.
+
+### API Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| POST | `/api/todo/create` | Create a TODO |
+| POST | `/api/todo/update` | Update a TODO |
+| POST | `/api/todo/delete/{id}` | Delete a TODO by id |
+| GET | `/api/todo/getbyid/{id}` | Get a TODO by id |
+| GET | `/api/todo/getall` | List all TODOs |
+| POST | `/api/category/create` | Create a category |
+| POST | `/api/category/update` | Update a category |
+| POST | `/api/category/delete/{id}` | Delete a category by id |
+| GET | `/api/category/getbyid/{id}` | Get a category by id |
+| GET | `/api/category/getall` | List all categories |
+
+Example:
+
+```bash
+curl -X POST localhost:8080/api/todo/create \
+  -H 'Content-Type: application/json' \
+  -d '{"tid":"1","activity":"Write docs","description":"Update README","isdone":false}'
+
+curl localhost:8080/api/todo/getall
+```
 
 ## Architecture Overview
 
 The application follows a ports-and-adapters layout:
 
-- Controllers (handlers) depend on repository **interfaces**, never on a
+- An HTTP layer (`ServeMux` + route files in `cmd/`) maps `/api/*` routes to
+  controller methods.
+- Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
 - Repository interfaces (`ToDoRepository`, `CategoryRepository`) are the
   **ports** defined alongside the domain model.
@@ -58,7 +89,7 @@ The application follows a ports-and-adapters layout:
 - Domain models (`TODO`, `Category`) are persistence-independent.
 
 ```text
-Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
+HTTP route  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
 ```
 
 ## C4 Architecture Diagrams
@@ -70,39 +101,45 @@ in Mermaid, which renders natively on GitHub.
 
 ```mermaid
 flowchart TD
-    user["User<br/>[Person]<br/>Tracks tasks and categories"]
-    system["Todo List Application<br/>[Software System]<br/>Manages TODO items and categories"]
+    user["API Client / User<br/>[Person]<br/>Tracks tasks and categories"]
+    system["Todo List API<br/>[Software System]<br/>Manages TODO items and categories over HTTP"]
 
-    user -->|"Creates / views / deletes TODOs"| system
+    user -->|"Sends HTTP/JSON requests<br/>(create / update / delete / read)"| system
 ```
 
 ### Level 2 - Container
 
 ```mermaid
 flowchart TD
-    user["User<br/>[Person]"]
+    user["API Client / User<br/>[Person]"]
 
-    subgraph todoApp [Todo List Application]
-        cli["CLI Application<br/>[Container: Go binary]<br/>Runs controllers and demo flow"]
+    subgraph todoApp [Todo List API]
+        api["HTTP API Server<br/>[Container: Go net/http on :8080]<br/>Routes requests to controllers, logs via slog"]
         store["In-Memory Store<br/>[Container: Go maps]<br/>Holds TODOs and Categories in memory"]
     end
 
-    user -->|"Runs commands"| cli
-    cli -->|"Reads / writes via repository ports"| store
+    user -->|"HTTP/JSON over :8080<br/>/api/todo/*, /api/category/*"| api
+    api -->|"Reads / writes via repository ports"| store
 ```
 
 ### Level 3 - Component
 
 ```mermaid
 flowchart TD
-    subgraph handlers [Handlers]
-        todoCtrl["TODOController<br/>[Component]<br/>Coordinates TODO use cases"]
-        catCtrl["CategoryController<br/>[Component]<br/>Coordinates Category use cases"]
+    user["API Client / User<br/>[Person]"]
+
+    subgraph server [HTTP API Server - cmd package]
+        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/* routes to handlers"]
+    end
+
+    subgraph handlers [Controllers - controller package]
+        todoCtrl["TODOController<br/>[Component]<br/>HTTP handlers for TODO use cases"]
+        catCtrl["CategoryController<br/>[Component]<br/>HTTP handlers for Category use cases"]
     end
 
     subgraph ports [Ports - model package]
-        todoRepo["ToDoRepository<br/>[Interface]<br/>Create / Delete / GetById / GetAll"]
-        catRepo["CategoryRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
+        todoRepo["ToDoRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
+        catRepo["CategoryRepository<br/>[Interface]<br/>Create / Update / Delete / GetByID / GetAll"]
     end
 
     subgraph adapters [Adapters - memorystore package]
@@ -114,6 +151,10 @@ flowchart TD
         todoModel["TODO<br/>[Entity]"]
         catModel["Category<br/>[Entity]"]
     end
+
+    user -->|"HTTP/JSON"| mux
+    mux -->|"routes to"| todoCtrl
+    mux -->|"routes to"| catCtrl
 
     todoCtrl -->|"depends on"| todoRepo
     catCtrl -->|"depends on"| catRepo
@@ -129,6 +170,6 @@ flowchart TD
 
 - Persistent storage adapter (SQL or file-based) implementing the existing
   repository ports.
-- HTTP API layer in front of the controllers.
-- `Update` support for `ToDoRepository` (currently commented out).
+- Input validation and consistent JSON error responses.
+- Authentication / authorization for the API.
 - Tests for adapters and controllers.

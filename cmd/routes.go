@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 
 	"todolist/controller"
 )
 
-func ToDoRoutes(todo controller.TODOController, mux *http.ServeMux) http.Handler {
+func ToDoRoutes(todo controller.TODOController, mux *http.ServeMux, logger *slog.Logger) http.Handler {
+	logger.LogAttrs(context.Background(), slog.LevelDebug, "Adding http handler to the route for TODO")
 	mux.HandleFunc("POST /api/todo/create", todo.Create)
 	mux.HandleFunc("POST /api/todo/update", todo.Update)
 	mux.HandleFunc("POST /api/todo/delete/{id}", todo.Delete)

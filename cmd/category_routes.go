@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 
 	"todolist/controller"
 )
 
-func CategoryRoutes(category controller.CategoryController, mux *http.ServeMux) http.Handler {
+func CategoryRoutes(category controller.CategoryController, mux *http.ServeMux, logger *slog.Logger) http.Handler {
+	logger.LogAttrs(context.Background(), slog.LevelDebug, "Adding http handler to the route for Catgeory")
 	mux.HandleFunc("POST /api/category/create", category.Create)
 	mux.HandleFunc("POST /api/category/update", category.Update)
 	mux.HandleFunc("POST /api/category/delete/{id}", category.Delete)
