@@ -16,12 +16,12 @@ func main() {
 	todostore := memorystore.NewTodoMap()
 	categoryController := controller.NewCategoryController(categorystore, logger)
 	todoController := controller.NewTODOController(todostore, logger)
-	CategoryRoutes(*categoryController, mux)
-	ToDoRoutes(*todoController, mux)
+	CategoryRoutes(*categoryController, mux, logger)
+	ToDoRoutes(*todoController, mux, logger)
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	logger.LogAttrs(context.Background(), slog.LevelInfo, "Listening....")
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "Listening on port ...", slog.Int("port", 8080))
 	server.ListenAndServe() // Run the http server
 }
