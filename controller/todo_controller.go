@@ -30,6 +30,7 @@ func (t *TODOController) Create(w http.ResponseWriter, r *http.Request) {
 			"failed to decode the todo object",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	err = t.store.Create(todolist)
 	if err != nil {
@@ -37,6 +38,7 @@ func (t *TODOController) Create(w http.ResponseWriter, r *http.Request) {
 			"failed to create the todo object",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusCreated) //TODO
 	t.logger.LogAttrs(context.Background(), slog.LevelInfo,
@@ -52,6 +54,7 @@ func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 			"failed to decode the todo object",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	err = t.store.Update(todolist)
 	if err != nil {
@@ -59,6 +62,7 @@ func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 			"failed to update the todo object",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent) //Update
 	t.logger.LogAttrs(context.Background(), slog.LevelInfo,
@@ -70,13 +74,17 @@ func (t *TODOController) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	err := t.store.Delete(id)
 	if err != nil {
-		t.logger.LogAttrs(context.Background(), slog.LevelError, "TODO")
+		t.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to delete the todo",
+			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 	t.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"todo object with the requested id has been deleted",
 		slog.String("id", id))
+
 }
 
 func (t *TODOController) GetAll(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +94,7 @@ func (t *TODOController) GetAll(w http.ResponseWriter, r *http.Request) {
 			"failed to extract the todo objects",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	j, err := json.Marshal(todolists)
@@ -94,6 +103,7 @@ func (t *TODOController) GetAll(w http.ResponseWriter, r *http.Request) {
 			"failed to encode the todo objects",
 			slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	// w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
@@ -112,6 +122,7 @@ func (t *TODOController) GetById(w http.ResponseWriter, r *http.Request) {
 			slog.String("error", err.Error()),
 			slog.String("category_id", id))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	j, err := json.Marshal(todo)
@@ -121,6 +132,7 @@ func (t *TODOController) GetById(w http.ResponseWriter, r *http.Request) {
 			slog.String("error", err.Error()),
 			slog.String("id", todo.TID))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	// w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")

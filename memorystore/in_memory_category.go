@@ -1,7 +1,6 @@
 package memorystore
 
 import (
-	"errors"
 	"sync"
 
 	"todolist/model"
@@ -24,8 +23,7 @@ func (c *CategoryMap) Create(Category model.Category) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.store[Category.CID]; ok {
-		return errors.New("ID already found")
-
+		return model.ErrObjectAlreadyExists
 	}
 	c.store[Category.CID] = Category
 	return nil
@@ -38,7 +36,7 @@ func (c *CategoryMap) Update(category model.Category) error {
 		c.store[category.CID] = category
 		return nil
 	}
-	return errors.New("ID not found")
+	return model.ErrObjectNotFound
 
 }
 func (c *CategoryMap) Delete(cid string) error {
@@ -48,7 +46,7 @@ func (c *CategoryMap) Delete(cid string) error {
 		delete(c.store, cid)
 		return nil
 	}
-	return errors.New("ID not found")
+	return model.ErrObjectNotFound
 }
 
 func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
@@ -57,7 +55,7 @@ func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
 	if _, ok := c.store[cid]; ok {
 		return c.store[cid], nil
 	}
-	return model.Category{}, errors.New("ID not found")
+	return model.Category{}, model.ErrObjectNotFound
 }
 
 func (c *CategoryMap) GetAll() ([]model.Category, error) {
@@ -65,7 +63,7 @@ func (c *CategoryMap) GetAll() ([]model.Category, error) {
 	defer c.mu.Unlock()
 	category := make([]model.Category, 0)
 	if len(c.store) == 0 {
-		return nil, errors.New("Store is empty")
+		return nil, model.ErrStoreEmpty
 	}
 	for _, v := range c.store {
 		category = append(category, v)

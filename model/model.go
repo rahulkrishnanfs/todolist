@@ -1,7 +1,14 @@
 package model
 
 import (
+	"errors"
 	"time"
+)
+
+var (
+	ErrObjectAlreadyExists = errors.New("object already exists")
+	ErrObjectNotFound      = errors.New("object not found")
+	ErrStoreEmpty          = errors.New("store is empty")
 )
 
 // Database indepdendent (Domain model)
