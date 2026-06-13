@@ -9,8 +9,9 @@ import (
 	"todolist/model"
 )
 
+// dealing with http programing
 type CategoryController struct {
-	store  model.CategoryRepository
+	store  model.CategoryRepository // we are communicating by contract: Liskov substitution principle ; Design by contract
 	logger *slog.Logger
 }
 
@@ -26,6 +27,9 @@ func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
 	var category model.Category
 	err := json.NewDecoder(r.Body).Decode(&category)
 	if err != nil {
+		// if (errors.Is(err,model.ErrObjectAlreadyExists)){
+		//  Package level errors can be compared to idividual level errors
+		// }
 		c.logger.LogAttrs(context.Background(), slog.LevelError,
 			"failed to decode the category object",
 			slog.String("error", err.Error()))
@@ -64,10 +68,10 @@ func (c *CategoryController) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
 	c.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"catagory object with the id has been updated",
 		slog.String("id", category.CID))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (c *CategoryController) Delete(w http.ResponseWriter, r *http.Request) {
@@ -80,10 +84,10 @@ func (c *CategoryController) Delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
 	c.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"the requested category object has been deleted with id",
 		slog.String("id", id))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (c *CategoryController) GetAll(w http.ResponseWriter, r *http.Request) {
@@ -103,10 +107,10 @@ func (c *CategoryController) GetAll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
 	c.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"all requested category objects has been sent to the client")
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(j)
 }
 
 func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
@@ -130,9 +134,9 @@ func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
 	c.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"requested category object with id has been sent to the client",
 		slog.String("id", id))
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(j)
 }

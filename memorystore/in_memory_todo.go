@@ -1,7 +1,6 @@
 package memorystore
 
 import (
-	"errors"
 	"sync"
 	"todolist/model"
 )
@@ -25,7 +24,7 @@ func (t *TodoMap) Create(todo model.TODO) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.store[todo.TID]; ok {
-		return errors.New("ID already found")
+		return model.ErrObjectAlreadyExists
 
 	}
 	t.store[todo.TID] = todo
@@ -40,7 +39,7 @@ func (t *TodoMap) Delete(id string) error {
 		delete(t.store, id)
 		return nil
 	}
-	return errors.New("ID not found in the map ")
+	return model.ErrObjectNotFound
 }
 
 func (t *TodoMap) Update(todo model.TODO) error {
@@ -50,7 +49,7 @@ func (t *TodoMap) Update(todo model.TODO) error {
 		t.store[todo.TID] = todo
 		return nil
 	} else {
-		return errors.New("ID not found in the map ")
+		return model.ErrObjectNotFound
 	}
 
 }
@@ -61,7 +60,7 @@ func (t *TodoMap) GetById(id string) (model.TODO, error) {
 	if _, ok := t.store[id]; ok {
 		return t.store[id], nil
 	}
-	return model.TODO{}, errors.New("Store is empty")
+	return model.TODO{}, model.ErrObjectNotFound
 }
 
 func (t *TodoMap) GetAll() ([]model.TODO, error) {
@@ -69,7 +68,7 @@ func (t *TodoMap) GetAll() ([]model.TODO, error) {
 	defer t.mu.Unlock()
 	todo := make([]model.TODO, 0)
 	if len(t.store) == 0 {
-		return nil, errors.New("Store is empty")
+		return nil, model.ErrStoreEmpty
 	}
 	for _, v := range t.store {
 		todo = append(todo, v)

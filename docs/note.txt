@@ -1,0 +1,82 @@
+Domain Model:
+\\\\\\\\\\\
+TODO
+TODO belongs to Category 
+
+
+Category:
+   
+////////////
+Reposyiry for TODO (TODORepository) - Interface
+Repository Category (CategoryRepository) - Interface
+
+
+
+Persistance:
+    
+
+
+
+handler(controller> programming) => persistance layer (Repository)=> Domain model 
+
+
+
+
+printer HP => 
+            
+            abstarction:
+
+                        driver 1
+
+                        driver 2 
+
+
+
+Full error logging
+Information logging
+fully functional application  
+
+
+
+func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
+	var category model.Category
+	err := json.NewDecoder(r.Body).Decode(&category)
+	if err != nil {
+		// if (errors.Is(err,model.ErrObjectAlreadyExists)){
+		//  Package level errors can be compared to idividual level errors
+		// }
+
+
+Solid Principles:
+
+1)SRP:= there should never be more than one reason for a class to change
+
+2)Liskov substitution principle : = design by contract 
+    
+4)Inteface Segregation - Interface segregation principle; We should not force client to implement both 
+we should give a flexbility to choose
+
+	type Read interface{
+       Reader()
+	}
+
+	type Writer interface {
+       Writer()
+	}
+
+We are dembedding both for client to use both 
+	type ReadWriter interface {
+       Read
+	   Writer 
+	}
+
+5) Dependency inversion principle : (https://en.wikipedia.org/wiki/Dependency_injection)
+      its a practical implemntation of  Liskov substitution principle as we can do only by contract
+      two types : a) property injection and b) method injection eg: https://github.com/shijuvar/gokit/blob/master/examples/contract-type/good-api/logger.go
+
+Login/Logout - https://github.com/shijuvar/gokit/blob/master/examples/http-app/pkg/auth/auth.go
+
+configuration : https://github.com/shijuvar/gokit/blob/master/examples/http-app/cmd/appd/config/app.toml
+https://github.com/shijuvar/gokit/blob/master/examples/http-app/pkg/bootstrapper/bootstrapper.go
+
+https functionality
