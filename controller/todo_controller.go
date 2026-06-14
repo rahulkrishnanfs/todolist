@@ -140,7 +140,11 @@ func (t *TODOController) GetById(w http.ResponseWriter, r *http.Request) {
 	}
 	// w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
+	if _, err := w.Write(j); err != nil {
+		t.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to write the response",
+			slog.String("error", err.Error()))
+	}
 	t.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"requested todo object with id has been sent to the client",
 		slog.String("id", id))
