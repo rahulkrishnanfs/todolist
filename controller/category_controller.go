@@ -110,7 +110,11 @@ func (c *CategoryController) GetAll(w http.ResponseWriter, r *http.Request) {
 	c.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"all requested category objects has been sent to the client")
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
+	if _, err := w.Write(j); err != nil {
+		c.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to write the response",
+			slog.String("error", err.Error()))
+	}
 }
 
 func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
@@ -138,5 +142,9 @@ func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
 		"requested category object with id has been sent to the client",
 		slog.String("id", id))
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
+	if _, err := w.Write(j); err != nil {
+		c.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to write the response",
+			slog.String("error", err.Error()))
+	}
 }

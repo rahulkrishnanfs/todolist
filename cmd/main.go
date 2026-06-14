@@ -24,5 +24,9 @@ func main() {
 		Handler: mux,
 	}
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "Listening on port ...", slog.Int("port", 8080))
-	server.ListenAndServe() // Run the http server
+	if err := server.ListenAndServe(); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelError, "http server stopped",
+			slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 }
