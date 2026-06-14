@@ -23,7 +23,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.22.0'
 
       # Install dependencies
       - name: Install Dependencies
@@ -36,7 +36,7 @@ jobs:
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
           golangci-lint run --out-format json > golangci-lint-report.json || true
           golangci-lint run
-
+          
       # Analyze with SonarCloud
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
