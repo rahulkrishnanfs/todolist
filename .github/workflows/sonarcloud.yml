@@ -40,6 +40,14 @@ jobs:
       # Analyze with SonarCloud
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
+        with:
+          args: >
+            -Dsonar.organization=zaagpro
+            -Dsonar.projectKey=rahulkrishnanfs_todolist
+            -Dsonar.sources=.
+            -Dsonar.tests=.
+            -Dsonar.go.coverage.reportPaths=coverage.out
+            -Dsonar.verbose=true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
