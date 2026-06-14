@@ -1,3 +1,5 @@
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=rahulkrishnanfs_todolist&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=rahulkrishnanfs_todolist) [![Duplicated Lines (%)](https://sonarcloud.io/api/project_badges/measure?project=rahulkrishnanfs_todolist&metric=duplicated_lines_density)](https://sonarcloud.io/summary/new_code?id=rahulkrishnanfs_todolist) [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=rahulkrishnanfs_todolist&metric=bugs)](https://sonarcloud.io/summary/new_code?id=rahulkrishnanfs_todolist) [![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=rahulkrishnanfs_todolist&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=rahulkrishnanfs_todolist) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=rahulkrishnanfs_todolist&metric=coverage)](https://sonarcloud.io/summary/new_code?id=rahulkrishnanfs_todolist)
+ 
 # Todo List
 
 A small TODO list application written in Go, structured around clean / hexagonal
