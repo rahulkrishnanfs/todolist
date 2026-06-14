@@ -107,7 +107,11 @@ func (t *TODOController) GetAll(w http.ResponseWriter, r *http.Request) {
 	}
 	// w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(j)
+	if _, err := w.Write(j); err != nil {
+		t.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to write the response",
+			slog.String("error", err.Error()))
+	}
 	t.logger.LogAttrs(context.Background(), slog.LevelInfo,
 		"all requested todo objects has been returned to the client")
 
