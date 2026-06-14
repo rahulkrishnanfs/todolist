@@ -1,0 +1,44 @@
+name: SonarCloud analysis
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read # allows SonarCloud to decorate PRs with analysis results
+
+jobs:
+  Analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the code
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # Set up Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      # Install dependencies
+      - name: Install Dependencies
+        run: go mod tidy
+
+      # Run unit tests and generate coverage report
+      - name: Run Tests and Generate Coverage
+        run: |
+          go test ./... -coverprofile=coverage.out
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run --out-format json > golangci-lint-report.json
+
+      # Analyze with SonarCloud
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
