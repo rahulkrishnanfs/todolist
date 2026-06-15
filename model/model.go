@@ -34,7 +34,7 @@ type Category struct {
 // Abstracts persistance for TODO Items
 type ToDoRepository interface {
 	Create(TODO) error
-	Update(TODO) error
+	Update(string, TODO) error
 	Delete(string) error
 	GetById(string) (TODO, error)
 	GetAll() ([]TODO, error)
@@ -44,7 +44,7 @@ type ToDoRepository interface {
 // abstracts persistance of Category Items
 type CategoryRepository interface {
 	Create(Category) error
-	Update(Category) error
+	Update(string, Category) error
 	Delete(string) error
 	GetByID(string) (Category, error)
 	GetAll() ([]Category, error)

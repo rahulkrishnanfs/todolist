@@ -42,11 +42,11 @@ func (t *TodoMap) Delete(id string) error {
 	return model.ErrObjectNotFound
 }
 
-func (t *TodoMap) Update(todo model.TODO) error {
+func (t *TodoMap) Update(tid string, todo model.TODO) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.store[todo.TID]; ok {
-		t.store[todo.TID] = todo
+	if _, ok := t.store[tid]; ok {
+		t.store[tid] = todo
 		return nil
 	} else {
 		return model.ErrObjectNotFound

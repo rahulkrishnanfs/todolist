@@ -48,6 +48,7 @@ func (t *TODOController) Create(w http.ResponseWriter, r *http.Request) {
 }
 func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 	var todolist model.TODO
+	id := r.PathValue("id")
 	err := json.NewDecoder(r.Body).Decode(&todolist)
 	if err != nil {
 		t.logger.LogAttrs(context.Background(), slog.LevelError,
@@ -56,7 +57,7 @@ func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = t.store.Update(todolist)
+	err = t.store.Update(id, todolist)
 	if err != nil {
 		t.logger.LogAttrs(context.Background(), slog.LevelError,
 			"failed to update the todo object",
