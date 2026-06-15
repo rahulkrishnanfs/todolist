@@ -29,11 +29,11 @@ func (c *CategoryMap) Create(Category model.Category) error {
 	return nil
 }
 
-func (c *CategoryMap) Update(category model.Category) error {
+func (c *CategoryMap) Update(cid string, category model.Category) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.store[category.CID]; ok {
-		c.store[category.CID] = category
+	if _, ok := c.store[cid]; ok {
+		c.store[cid] = category
 		return nil
 	}
 	return model.ErrObjectNotFound

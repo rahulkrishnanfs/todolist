@@ -52,6 +52,7 @@ func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
 }
 func (c *CategoryController) Update(w http.ResponseWriter, r *http.Request) {
 	var category model.Category
+	id := r.PathValue("id")
 	err := json.NewDecoder(r.Body).Decode(&category)
 	if err != nil {
 		c.logger.LogAttrs(context.Background(), slog.LevelError,
@@ -60,7 +61,7 @@ func (c *CategoryController) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = c.store.Update(category)
+	err = c.store.Update(id, category)
 	if err != nil {
 		c.logger.LogAttrs(context.Background(), slog.LevelError,
 			"failed to update the category object",

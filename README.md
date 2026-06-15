@@ -19,6 +19,7 @@ Currently the project ships with an in-memory store and an HTTP REST API
 - In-memory adapter implementation (`TodoMap`, `CategoryMap`).
 - Controllers (`TODOController`, `CategoryController`) that depend on the
   abstractions, not concrete storage.
+- Structured JSON logging via `log/slog`, injected into the controllers.
 
 ## Project Structure
 
@@ -57,12 +58,12 @@ stores, controllers, and routes, then listens on `:8080`.
 | Method | Path | Description |
 | --- | --- | --- |
 | POST | `/api/todo/create` | Create a TODO |
-| POST | `/api/todo/update` | Update a TODO |
+| PUT | `/api/todo/update` | Update a TODO |
 | POST | `/api/todo/delete/{id}` | Delete a TODO by id |
 | GET | `/api/todo/getbyid/{id}` | Get a TODO by id |
 | GET | `/api/todo/getall` | List all TODOs |
 | POST | `/api/category/create` | Create a category |
-| POST | `/api/category/update` | Update a category |
+| PUT | `/api/category/update` | Update a category |
 | POST | `/api/category/delete/{id}` | Delete a category by id |
 | GET | `/api/category/getbyid/{id}` | Get a category by id |
 | GET | `/api/category/getall` | List all categories |
