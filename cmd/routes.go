@@ -8,7 +8,7 @@ import (
 	"todolist/controller"
 )
 
-func ToDoRoutes(todo controller.TODOController, mux *http.ServeMux, logger *slog.Logger) {
+func ToDoRoutes(todo controller.TodoController, mux *http.ServeMux, logger *slog.Logger) {
 	logger.LogAttrs(context.Background(), slog.LevelDebug, "Adding http handler to the route for TODO")
 	mux.HandleFunc("POST /api/v1/todos", todo.Create)
 	mux.HandleFunc("GET /api/v1/todos", todo.GetAll)

@@ -19,13 +19,13 @@ func NewCategoryMap() *CategoryMap {
 	}
 }
 
-func (c *CategoryMap) Create(Category model.Category) error {
+func (c *CategoryMap) Create(category model.Category) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.store[Category.CID]; ok {
+	if _, ok := c.store[category.CID]; ok {
 		return model.ErrObjectAlreadyExists
 	}
-	c.store[Category.CID] = Category
+	c.store[category.CID] = category
 	return nil
 }
 
@@ -49,7 +49,7 @@ func (c *CategoryMap) Delete(cid string) error {
 	return model.ErrObjectNotFound
 }
 
-func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
+func (c *CategoryMap) GetById(cid string) (model.Category, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.store[cid]; ok {

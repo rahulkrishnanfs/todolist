@@ -9,25 +9,25 @@ import (
 
 type TodoMap struct {
 	mu    sync.RWMutex
-	store map[string]model.TODO
+	store map[string]model.Todo
 }
 
-// Factory Method to create new TODO
+// Factory Method to create new Todo
 func NewTodoMap() *TodoMap {
 
 	return &TodoMap{
-		store: make(map[string]model.TODO),
+		store: make(map[string]model.Todo),
 	}
 }
 
-func (t *TodoMap) Create(todo model.TODO) error {
+func (t *TodoMap) Create(Todo model.Todo) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.store[todo.TID]; ok {
+	if _, ok := t.store[Todo.TID]; ok {
 		return model.ErrObjectAlreadyExists
 
 	}
-	t.store[todo.TID] = todo
+	t.store[Todo.TID] = Todo
 	// fmt.Println(m.store, "......")
 	return nil
 }
@@ -42,11 +42,11 @@ func (t *TodoMap) Delete(id string) error {
 	return model.ErrObjectNotFound
 }
 
-func (t *TodoMap) Update(tid string, todo model.TODO) error {
+func (t *TodoMap) Update(tid string, Todo model.Todo) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.store[tid]; ok {
-		t.store[tid] = todo
+		t.store[tid] = Todo
 		return nil
 	} else {
 		return model.ErrObjectNotFound
@@ -54,24 +54,24 @@ func (t *TodoMap) Update(tid string, todo model.TODO) error {
 
 }
 
-func (t *TodoMap) GetById(id string) (model.TODO, error) {
+func (t *TodoMap) GetById(id string) (model.Todo, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.store[id]; ok {
 		return t.store[id], nil
 	}
-	return model.TODO{}, model.ErrObjectNotFound
+	return model.Todo{}, model.ErrObjectNotFound
 }
 
-func (t *TodoMap) GetAll() ([]model.TODO, error) {
+func (t *TodoMap) GetAll() ([]model.Todo, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	todo := make([]model.TODO, 0)
+	Todo := make([]model.Todo, 0)
 	if len(t.store) == 0 {
 		return nil, model.ErrStoreEmpty
 	}
 	for _, v := range t.store {
-		todo = append(todo, v)
+		Todo = append(Todo, v)
 	}
-	return todo, nil
+	return Todo, nil
 }

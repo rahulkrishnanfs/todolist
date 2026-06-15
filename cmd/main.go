@@ -16,7 +16,7 @@ func main() {
 	categorystore := memorystore.NewCategoryMap()
 	todostore := memorystore.NewTodoMap()
 	categoryController := controller.NewCategoryController(categorystore, logger)
-	todoController := controller.NewTODOController(todostore, logger)
+	todoController := controller.NewTodoController(todostore, logger)
 	CategoryRoutes(*categoryController, mux, logger)
 	ToDoRoutes(*todoController, mux, logger)
 	server := &http.Server{

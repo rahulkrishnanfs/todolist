@@ -120,7 +120,7 @@ func (c *CategoryController) GetAll(w http.ResponseWriter, r *http.Request) {
 
 func (c *CategoryController) GetById(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	category, err := c.store.GetByID(id)
+	category, err := c.store.GetById(id)
 	if err != nil {
 		c.logger.LogAttrs(context.Background(), slog.LevelError,
 			"failed to get category object by id",
