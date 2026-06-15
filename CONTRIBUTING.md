@@ -14,6 +14,7 @@ and how to propose changes.
 - [Coding Guidelines](#coding-guidelines)
 - [Architecture Guidelines](#architecture-guidelines)
 - [Commit Messages](#commit-messages)
+- [Cursor Skills](#using-the-commit-with-issue-cursor-skill)
 - [Pull Requests](#pull-requests)
 - [Reporting Issues](#reporting-issues)
 
@@ -138,6 +139,28 @@ survives restarts. No changes to controllers or domain models.
 
 A short type prefix is encouraged (`feat:`, `fix:`, `docs:`, `refactor:`,
 `test:`, `chore:`).
+
+### Using the `commit-with-issue` Cursor skill
+
+If you work in [Cursor](https://cursor.com), this repo provides a skill that
+automates the convention above. Run `/commit-with-issue` in the agent and it
+will:
+
+- ask for the GitHub issue number (required) and reference it as `#[issue]`,
+- create a branch named `feature/#[issue]-[branchname]`,
+- write a Conventional Commit (`type(scope): subject`) with a `Closes #[issue]`
+  footer.
+
+The skill lives in `.cursor/skills/commit-with-issue/SKILL.md`. Commits are
+attributed to your own git identity, so set it once before committing:
+
+```bash
+git config user.name "Your Name"
+git config user.email "you@example.com"
+```
+
+See the README's [Developer Tooling](README.md#developer-tooling-cursor-skills)
+section for the full list of available skills.
 
 ## Pull Requests
 

@@ -195,6 +195,37 @@ flowchart TD
     catMap -->|"stores"| catModel
 ```
 
+## Developer Tooling (Cursor Skills)
+
+This repo ships [Cursor](https://cursor.com) Agent Skills under `.cursor/skills/`.
+They are committed to the repository, so every contributor working in Cursor gets
+the same workflows automatically.
+
+| Skill | What it does | How to use |
+| --- | --- | --- |
+| `commit-with-issue` | Creates a Conventional Commit linked to a GitHub issue and a matching `feature/#[issue]-[branch]` branch. | In the Cursor agent, run `/commit-with-issue`. |
+
+### `commit-with-issue`
+
+When invoked, the skill:
+
+1. Inspects your staged/unstaged changes.
+2. Asks for the GitHub issue number (required) and uses it with a `#` prefix.
+3. Picks the right Conventional Commit type (`feat`, `fix`, `docs`, `refactor`, …).
+4. Creates a branch named `feature/#[issue]-[branchname]`.
+5. Commits with a `type(scope): subject` message and a `Closes #[issue]` footer.
+
+Commits are authored by **you** (the developer making the change). Configure your
+git identity once so authorship is attributed correctly:
+
+```bash
+git config user.name "Your Name"
+git config user.email "you@example.com"
+```
+
+The skill definitions live in `.cursor/skills/<skill-name>/SKILL.md` — read or edit
+them there to adjust the workflow.
+
 ## Roadmap / Future Work
 
 - Persistent storage adapter (SQL or file-based) implementing the existing
