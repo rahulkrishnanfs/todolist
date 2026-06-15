@@ -13,13 +13,13 @@ var (
 
 // Database indepdendent (Domain model)
 // Users can track the individual Items
-type TODO struct {
+type Todo struct {
 	TID          string    `json:"tid"`
 	Activity     string    `json:"activity"`
 	Description  string    `json:"description"`
-	CreationDate time.Time `json:"creationdate"`
-	IsDone       bool      `json:"isdone"`
-	CategoryID   string    `json:"cayegoryid"`
+	CreationDate time.Time `json:"creation_date"`
+	IsDone       bool      `json:"is_done"`
+	CategoryID   string    `json:"category_id"`
 }
 
 // Entity
@@ -32,12 +32,12 @@ type Category struct {
 
 // interface Abstraction
 // Abstracts persistance for TODO Items
-type ToDoRepository interface {
-	Create(TODO) error
-	Update(string, TODO) error
+type TodoRepository interface {
+	Create(Todo) error
+	Update(string, Todo) error
 	Delete(string) error
-	GetById(string) (TODO, error)
-	GetAll() ([]TODO, error)
+	GetById(string) (Todo, error)
+	GetAll() ([]Todo, error)
 }
 
 // Intermediate between Datasource and domain model
@@ -46,6 +46,6 @@ type CategoryRepository interface {
 	Create(Category) error
 	Update(string, Category) error
 	Delete(string) error
-	GetByID(string) (Category, error)
+	GetById(string) (Category, error)
 	GetAll() ([]Category, error)
 }

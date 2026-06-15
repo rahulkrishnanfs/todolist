@@ -42,7 +42,7 @@ go run ./cmd
 Verify it works:
 
 ```bash
-curl localhost:8080/api/todo/getall
+curl localhost:8080/api/v1/todos
 ```
 
 See the [README](README.md) for the full list of API endpoints and example

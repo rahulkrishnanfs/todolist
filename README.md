@@ -19,7 +19,12 @@ Currently the project ships with an in-memory store and an HTTP REST API
 - In-memory adapter implementation (`TodoMap`, `CategoryMap`).
 - Controllers (`TODOController`, `CategoryController`) that depend on the
   abstractions, not concrete storage.
-- Structured JSON logging via `log/slog`, injected into the controllers.
+- Structured JSON logging via `log/slog`, created in `main` and injected into
+  the controllers.
+- Sentinel domain errors (`ErrObjectNotFound`, `ErrObjectAlreadyExists`,
+  `ErrStoreEmpty`) returned by the stores.
+- Meaningful HTTP status codes for writes (`201 Created` on create,
+  `204 No Content` on update/delete).
 
 ## Project Structure
 
@@ -27,8 +32,8 @@ Currently the project ships with an in-memory store and an HTTP REST API
 todolist/
 ├── cmd/
 │   ├── main.go                 # Entrypoint: wires stores, controllers, routes; starts HTTP server
-│   ├── routes.go               # ToDoRoutes: registers /api/todo/* handlers
-│   └── category_routes.go      # CategoryRoutes: registers /api/category/* handlers
+│   ├── routes.go               # ToDoRoutes: registers /api/v1/todos handlers
+│   └── category_routes.go      # CategoryRoutes: registers /api/v1/categories handlers
 ├── controller/
 │   ├── todo_controller.go      # TODOController (depends on ToDoRepository)
 │   └── category_controller.go  # CategoryController (depends on CategoryRepository)
@@ -57,33 +62,33 @@ stores, controllers, and routes, then listens on `:8080`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/api/todo/create` | Create a TODO |
-| PUT | `/api/todo/update` | Update a TODO |
-| POST | `/api/todo/delete/{id}` | Delete a TODO by id |
-| GET | `/api/todo/getbyid/{id}` | Get a TODO by id |
-| GET | `/api/todo/getall` | List all TODOs |
-| POST | `/api/category/create` | Create a category |
-| PUT | `/api/category/update` | Update a category |
-| POST | `/api/category/delete/{id}` | Delete a category by id |
-| GET | `/api/category/getbyid/{id}` | Get a category by id |
-| GET | `/api/category/getall` | List all categories |
+| POST | `/api/v1/todos` | Create a TODO |
+| GET | `/api/v1/todos` | List all TODOs |
+| GET | `/api/v1/todos/{id}` | Get a TODO by id |
+| PUT | `/api/v1/todos/{id}` | Update a TODO |
+| DELETE | `/api/v1/todos/{id}` | Delete a TODO by id |
+| POST | `/api/v1/categories` | Create a category |
+| GET | `/api/v1/categories` | List all categories |
+| GET | `/api/v1/categories/{id}` | Get a category by id |
+| PUT | `/api/v1/categories/{id}` | Update a category |
+| DELETE | `/api/v1/categories/{id}` | Delete a category by id |
 
 Example:
 
 ```bash
-curl -X POST localhost:8080/api/todo/create \
+curl -X POST localhost:8080/api/v1/todos \
   -H 'Content-Type: application/json' \
   -d '{"tid":"1","activity":"Write docs","description":"Update README","isdone":false}'
 
-curl localhost:8080/api/todo/getall
+curl localhost:8080/api/v1/todos
 ```
 
 ## Architecture Overview
 
 The application follows a ports-and-adapters layout:
 
-- An HTTP layer (`ServeMux` + route files in `cmd/`) maps `/api/*` routes to
-  controller methods.
+- An HTTP layer (`ServeMux` + route files in `cmd/`) maps RESTful `/api/v1/*`
+  routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
 - Repository interfaces (`ToDoRepository`, `CategoryRepository`) are the
@@ -92,9 +97,14 @@ The application follows a ports-and-adapters layout:
   implementing those ports. Other adapters (e.g. SQL, file) could be added
   without changing controllers or domain logic.
 - Domain models (`TODO`, `Category`) are persistence-independent.
+- A `*slog.Logger` (JSON handler writing to stdout) is constructed in
+  `cmd/main.go` and injected into both controllers, which emit structured logs
+  for each request.
 
 ```text
 HTTP route  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
+                      |
+                      +--> structured logs (slog JSON -> stdout)
 ```
 
 ## C4 Architecture Diagrams
@@ -123,8 +133,11 @@ flowchart TD
         store["In-Memory Store<br/>[Container: Go maps]<br/>Holds TODOs and Categories in memory"]
     end
 
-    user -->|"HTTP/JSON over :8080<br/>/api/todo/*, /api/category/*"| api
+    logs["Structured Logs<br/>[stdout: JSON via log/slog]"]
+
+    user -->|"HTTP/JSON over :8080<br/>/api/v1/todos, /api/v1/categories"| api
     api -->|"Reads / writes via repository ports"| store
+    api -->|"Emits structured JSON logs"| logs
 ```
 
 ### Level 3 - Component
@@ -134,7 +147,7 @@ flowchart TD
     user["API Client / User<br/>[Person]"]
 
     subgraph server [HTTP API Server - cmd package]
-        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/* routes to handlers"]
+        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/v1/* routes to handlers"]
     end
 
     subgraph handlers [Controllers - controller package]
@@ -155,6 +168,11 @@ flowchart TD
     subgraph domain [Domain - model package]
         todoModel["TODO<br/>[Entity]"]
         catModel["Category<br/>[Entity]"]
+        errs["Sentinel errors<br/>[ErrObjectNotFound, ErrObjectAlreadyExists, ErrStoreEmpty]"]
+    end
+
+    subgraph obs [Observability]
+        logger["slog.Logger<br/>[Component]<br/>JSON handler writing to stdout"]
     end
 
     user -->|"HTTP/JSON"| mux
@@ -164,8 +182,14 @@ flowchart TD
     todoCtrl -->|"depends on"| todoRepo
     catCtrl -->|"depends on"| catRepo
 
+    todoCtrl -->|"logs via"| logger
+    catCtrl -->|"logs via"| logger
+
     todoMap -.->|"implements"| todoRepo
     catMap -.->|"implements"| catRepo
+
+    todoMap -->|"returns"| errs
+    catMap -->|"returns"| errs
 
     todoMap -->|"stores"| todoModel
     catMap -->|"stores"| catModel

@@ -6,7 +6,14 @@ Severity legend: **[Critical]** can cause data loss/incorrect behavior/security 
 
 Status legend (added on re-review): **[Resolved]** fixed in current code, **[Partial]** partly addressed, **[Open]** still outstanding.
 
-> **Re-review note (2026-06-15):** The codebase changed since the original review. Controllers were moved out of `package main` into a dedicated `controller/` package, and structured logging (`log/slog`) was added. Each item below is annotated with its current status; some original code citations referenced `cmd/category_controller.go`, which is now `controller/category_controller.go`.
+> **Re-review note (2026-06-15):** The codebase changed since the original review. Notable changes:
+> - Controllers moved out of `package main` into a dedicated `controller/` package.
+> - Structured logging (`log/slog`) added and injected into controllers.
+> - Routes refactored to RESTful resource paths under `/api/v1/*` (closes 4.2).
+> - `Update` now takes the id from the path: `Update(id string, obj)` — but the body id is not reconciled with the path id, which introduces a **new** integrity bug (see 1.6).
+> - A naming refactor renamed `TODO` → `Todo`, `TODOController` → `TodoController`, `ToDoRepository` → `TodoRepository`, and standardized `GetByID` → `GetById` across both repositories. JSON tags moved to snake_case (`creation_date`, `is_done`). Some historical code citations below still use the old `TODO`/`cayegoryid` spellings.
+>
+> Each item below is annotated with its current status (`[Resolved]` = closed). Some original code citations referenced `cmd/category_controller.go`, which is now `controller/category_controller.go`. A deeper, attacker-focused pass was added in section 5 and a new correctness item (1.6).
 
 ---
 
@@ -44,9 +51,23 @@ func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
 
 `GetAll` returns `model.ErrStoreEmpty` when there are no records. An empty collection is a valid result (HTTP 200 with `[]`), not an error. Returning an error here forces a 500 for the normal "no data yet" case.
 
-**Status: Open.** Both `in_memory_category.go` and `in_memory_todo.go` still `return nil, model.ErrStoreEmpty` on an empty store.
+**Status: Open.** Both `in_memory_category.go` and `in_memory_todo.go` still `return nil, model.ErrStoreEmpty` on an empty store, and the controllers map any `GetAll` error to `500` — so an empty list currently yields a 500.
 
-Fix: return an empty slice and `nil` error when the store is empty.
+Fix: return an empty slice and `nil` error when the store is empty:
+
+```go
+func (t *TodoMap) GetAll() ([]model.TODO, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	todos := make([]model.TODO, 0, len(t.store)) // also pre-sizes (1.2)
+	for _, v := range t.store {
+		todos = append(todos, v)
+	}
+	return todos, nil // empty slice marshals as [], never an error
+}
+```
+
+You can then drop `ErrStoreEmpty` entirely.
 
 ### 1.4 [High] [Open] Reads take a write lock
 
@@ -65,13 +86,71 @@ func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
 }
 ```
 
-Fix: use `c.mu.RLock()` / `defer c.mu.RUnlock()` in read-only methods (`GetByID`, `GetAll`, both stores).
+Fix: use `c.mu.RLock()` / `defer c.mu.RUnlock()` in read-only methods (`GetByID`, `GetAll`, both stores):
+
+```go
+func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if v, ok := c.store[cid]; ok {
+		return v, nil
+	}
+	return model.Category{}, model.ErrObjectNotFound
+}
+```
 
 ### 1.5 [High] [Resolved] Misleading error messages
 
 `GetById` in the todo store used to return `"Store is empty"` when a single ID was missing, and `Delete`/`Update` used `"ID not found in the map "` (trailing space, leaking internal detail). Messages were inconsistent across the two stores.
 
 **Status: Resolved.** `model/model.go` now defines sentinel errors (`ErrObjectAlreadyExists`, `ErrObjectNotFound`, `ErrStoreEmpty`) and both stores return them consistently — exactly the recommended fix. Handlers can now `errors.Is` against these to map to proper HTTP status codes (see 4.1, still open).
+
+### 1.6 [Critical] [Open] `Update` does not reconcile the path id with the body id (record-overwrite / mass assignment)
+
+This is a **new** bug introduced when `Update` was changed to take the id from the URL path. The handler reads the id from the path, but the store writes the *body* object verbatim under that key — without checking that `body.TID` (or `body.CID`) matches the path id, and without forcing them to agree:
+
+```45:55:memorystore/in_memory_todo.go
+func (t *TodoMap) Update(tid string, todo model.TODO) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.store[tid]; ok {
+		t.store[tid] = todo // todo.TID comes from the body and may differ from tid
+		return nil
+	} else {
+		return model.ErrObjectNotFound
+	}
+}
+```
+
+Concretely, `PUT /api/v1/todos/A` with body `{"tid":"B", ...}` stores a record under key `A` whose internal `TID` field is `B`. The map key and the entity id now disagree, which:
+
+- breaks the invariant "the object stored at key X has id X" and corrupts any later `GetById`/serialization logic that trusts `TID`;
+- is a classic **mass-assignment** foothold — the client controls every persisted field (including `CreationDate`, `IsDone`, `CategoryID`) with no server-side authority;
+- combined with no auth (5.2), lets a caller rewrite arbitrary records.
+
+The success log compounds the confusion: it logs `todolist.TID` (the body value), not the path id that was actually used as the key.
+
+**Fix:** treat the path id as authoritative and ignore/validate the body id. For example:
+
+```go
+func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in model.TODO
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	in.TID = id // path is the source of truth; never trust the body id
+	if err := t.store.Update(id, in); err != nil {
+		// map err -> 404/500 (see 4.1)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+	t.logger.LogAttrs(r.Context(), slog.LevelInfo, "todo updated", slog.String("id", id))
+}
+```
+
+(Alternatively, reject with `400` when `body.TID != "" && body.TID != id`.) The same applies to `CategoryMap.Update` / `CategoryController.Update`.
 
 ---
 
@@ -85,9 +164,23 @@ Recommendation: introduce a `service` package: `Controller -> Service -> Reposit
 
 ### 2.2 [High] [Open] Client supplies primary keys (`TID`/`CID`)
 
-**Status: Open.** IDs come from the request body. Two problems: clients can overwrite each other's records by reusing an ID, and `Create` rejects rather than generating an ID. This is both a correctness and a security/ownership concern.
+**Status: Open.** `Create` still takes the id (and every other field) from the request body. Two problems: clients can overwrite/squat on records by choosing an ID, and `Create` rejects with `ErrObjectAlreadyExists` rather than minting an ID. `Update` now at least takes the id from the path, but the body id is still trusted (see 1.6), and `CreationDate`/`IsDone` are entirely client-controlled (mass assignment).
 
-Recommendation: generate IDs server-side (e.g. `google/uuid`) inside the service layer, ignore any client-supplied ID, and set `CreationDate` server-side too.
+Recommendation: generate IDs server-side inside the service layer, ignore any client-supplied ID, and set `CreationDate` server-side:
+
+```go
+func (s *TodoService) Create(ctx context.Context, in model.TODO) (model.TODO, error) {
+	in.TID = uuid.NewString()       // server-authoritative id
+	in.CreationDate = time.Now().UTC()
+	in.IsDone = false               // don't let the client preset state
+	if err := validate(in); err != nil { // see 5.4
+		return model.TODO{}, err
+	}
+	return in, s.repo.Create(ctx, in)
+}
+```
+
+Accept only `activity`, `description`, and `category_id` from the client; derive everything else.
 
 ### 2.3 [Medium] [Open] No referential integrity between TODO and Category
 
@@ -109,7 +202,7 @@ Recommendation: change signatures now to `Create(ctx context.Context, ...)`, etc
 
 ### 2.6 [Low] [Open] `Update` is a true upsert vs strict update — decide intent
 
-**Status: Open.** `Update` returns `ErrObjectNotFound` if absent (strict update), and the route is now `PUT`, but the semantics are still undocumented. That's reasonable, but combined with client-supplied IDs and no `PUT` semantics it's ambiguous. Clarify whether endpoints are create-only/update-only or upsert.
+**Status: Open.** `Update` is now `PUT /api/v1/{resource}/{id}` and returns `ErrObjectNotFound` when the id is absent (i.e. strict update, not create-on-PUT). That's a reasonable choice, but it isn't documented, and strict `PUT` semantics are unusual (idempotent `PUT` often implies upsert). Decide and document: either keep strict update (and return `404`, see 4.1) or make `PUT` a true upsert. Either way, fix the body-id reconciliation in 1.6 first.
 
 ---
 
@@ -146,29 +239,63 @@ Recommendation:
 - Duplicate on create -> `409 Conflict`.
 - Genuine unexpected errors -> `500` (and log internally, don't echo `err.Error()` to the client; see 5.1).
 
-### 4.2 [Medium] [Partial] Non-RESTful routing and verbs
+Map the sentinel errors from 1.5 with `errors.Is` and a small JSON helper, e.g.:
 
-`POST /api/todo/delete/{id}`, `GET /api/todo/getbyid/{id}` use verbs in the path, and several use the wrong methods.
+```go
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
 
-**Status: Partial.** `update` was changed to `PUT` (in both `cmd/routes.go` and `cmd/category_routes.go`), but the routes still use verbs in the path (`/create`, `/update`, `/delete/{id}`, `/getbyid/{id}`, `/getall`) rather than RESTful resource paths.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, model.ErrObjectNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, model.ErrObjectAlreadyExists):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+```
 
-Recommendation (Go 1.22 ServeMux supports this):
+Then in a handler: `if err := t.store.Create(todo); err != nil { writeError(w, statusFor(err), "could not create todo"); return }`. Note the client message is generic; the detailed `err` only goes to the logs (5.1).
 
-- `POST /api/todos` (create)
-- `GET /api/todos` (list)
-- `GET /api/todos/{id}`
-- `PUT /api/todos/{id}` (update)
-- `DELETE /api/todos/{id}`
+### 4.2 [Medium] [Resolved] Non-RESTful routing and verbs
+
+The original routes used verbs in the path (`POST /api/todo/delete/{id}`, `GET /api/todo/getbyid/{id}`, etc.) and the wrong methods.
+
+**Status: Resolved.** Both `cmd/routes.go` and `cmd/category_routes.go` now use RESTful resource paths under `/api/v1` with correct verbs:
+
+- `POST /api/v1/todos` (create)
+- `GET /api/v1/todos` (list)
+- `GET /api/v1/todos/{id}`
+- `PUT /api/v1/todos/{id}` (update)
+- `DELETE /api/v1/todos/{id}`
+
+…and the equivalent set under `/api/v1/categories`.
 
 ### 4.3 [Medium] [Partial] `Create` returns no body or `Location`
 
 **Status: Partial.** Handlers now write `201 Created`, but still send no response body or `Location` header. A create should return the created resource (especially once IDs are server-generated) and ideally a `Location` header.
 
-### 4.4 [Low] [Open] No request body size limit / strict decoding
+### 4.4 [Medium] [Open] No request body size limit / strict decoding
 
-**Status: Open.** `json.NewDecoder(r.Body).Decode` still accepts unknown fields and unbounded bodies.
+**Status: Open.** `json.NewDecoder(r.Body).Decode` still accepts unknown fields and unbounded bodies. Unbounded bodies are a real memory-exhaustion DoS vector (see 5.4), so this is closer to Medium than Low.
 
-Recommendation: wrap with `http.MaxBytesReader` and call `dec.DisallowUnknownFields()`.
+Recommendation: cap the body with `http.MaxBytesReader` and reject unknown fields:
+
+```go
+func decodeJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+```
+
+`DisallowUnknownFields` also helps mitigate the mass-assignment concern in 1.6/2.2 by rejecting unexpected keys.
 
 ---
 
@@ -178,9 +305,17 @@ Recommendation: wrap with `http.MaxBytesReader` and call `dec.DisallowUnknownFie
 
 `http.Error(w, err.Error(), ...)` sends raw internal error strings to the caller. This can leak storage internals and aids attackers.
 
-**Status: Open.** Errors are now also logged server-side via `slog` (good), but the handlers still pass `err.Error()` into `http.Error`, so the raw error is still echoed to the client.
+**Status: Open.** Errors are now also logged server-side via `slog` (good), but every handler still does `http.Error(w, err.Error(), ...)`, so the raw error is echoed to the client. For example, a malformed JSON body returns the exact `encoding/json` parser message, revealing internal field types and offsets.
 
-Recommendation: log the detailed error server-side; return a generic message and an appropriate status code to the client.
+Recommendation: log the detailed error server-side; return a generic message to the client (the `writeError`/`statusFor` helpers from 4.1 do exactly this):
+
+```go
+if err := t.store.Create(todo); err != nil {
+	t.logger.LogAttrs(r.Context(), slog.LevelError, "create failed", slog.Any("error", err))
+	writeError(w, statusFor(err), "could not create todo") // generic, no err.Error()
+	return
+}
+```
 
 ### 5.2 [High] [Open] No authentication / authorization
 
@@ -197,9 +332,20 @@ Recommendation: add auth (API key/JWT/session) and scope data per user. Even for
 	}
 ```
 
-No `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout`. A slow client can hold connections open indefinitely.
+No `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout`. A slow client can hold connections open indefinitely (slowloris).
 
-**Status: Open.** Recommendation: set sensible timeouts on `http.Server`.
+**Status: Open.** Recommendation: set sensible timeouts on `http.Server`:
+
+```go
+server := &http.Server{
+	Addr:              ":8080",
+	Handler:           mux,
+	ReadHeaderTimeout: 5 * time.Second,
+	ReadTimeout:       10 * time.Second,
+	WriteTimeout:      15 * time.Second,
+	IdleTimeout:       60 * time.Second,
+}
+```
 
 ### 5.4 [Medium] [Open] No input validation
 
@@ -207,7 +353,20 @@ No `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout`. A slow 
 
 ### 5.5 [Low] [Open] No rate limiting / CORS policy / security headers
 
-**Status: Open.** No throttling and no explicit CORS handling. Add as needed when exposing publicly.
+**Status: Open.** No throttling and no explicit CORS handling.
+
+### 5.6 [High] [Open] Mass assignment — client controls server-owned fields
+
+**Status: Open (new, attacker-focused).** Because handlers decode the full struct straight from the request body and persist it, the client controls *every* field, including ones that should be server-authoritative:
+
+- `CreationDate` — a caller can backdate/forward-date records, poisoning any time-based logic or audit trail.
+- `IsDone` — can be preset on create.
+- `TID`/`CID` — id squatting and, via 1.6, overwriting an existing record's identity.
+- `CategoryID` — points anywhere, since nothing validates it (2.3).
+
+This is the textbook mass-assignment pattern. Combined with **no authentication (5.2)** there's also no ownership model, so it doubles as an IDOR: any caller can read, modify, or delete any record by id.
+
+**Fix:** don't bind the transport DTO directly to the domain object. Accept a narrow input DTO with only client-settable fields, and have the service set ids/timestamps/state server-side (see the `Create` example in 2.2). Add `dec.DisallowUnknownFields()` (4.4) so unexpected keys are rejected rather than silently ignored. Add as needed when exposing publicly.
 
 ---
 
@@ -231,7 +390,24 @@ The original code called `server.ListenAndServe()` with no error check, so the p
 
 ### 6.2 [High] [Open] No graceful shutdown
 
-**Status: Open.** There's no signal handling. On SIGTERM (common in Kubernetes/containers) in-flight requests are dropped.
+**Status: Open.** There's no signal handling — and note that once you add it, the current `if err := server.ListenAndServe(); err != nil { os.Exit(1) }` in `main.go` will treat a clean shutdown as a failure, because `ListenAndServe` returns `http.ErrServerClosed`. Handle both together:
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+
+go func() {
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.LogAttrs(ctx, slog.LevelError, "server error", slog.Any("error", err))
+		os.Exit(1)
+	}
+}()
+
+<-ctx.Done() // wait for SIGINT/SIGTERM
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+_ = server.Shutdown(shutdownCtx)
+``` On SIGTERM (common in Kubernetes/containers) in-flight requests are dropped.
 
 Recommendation: listen for `os.Interrupt`/`SIGTERM` and call `server.Shutdown(ctx)` with a timeout.
 
@@ -278,42 +454,50 @@ Recommendation: add middleware for logging, request IDs, and `recover()`.
 
 ### 7.3 [Low] [Open] No metrics/tracing
 
-**Status: Open.** No Prometheus metrics or tracing hooks. Optional, but worth a stub for a service intended to grow.
+**Status: Open.** No Prometheus metrics or tracing hooks.
+
+### 7.4 [Low] [Open] Incorrect/misleading log attributes and detached context
+
+**Status: Open (new).** A few logging-quality issues that hurt debuggability:
+
+- `TODOController.GetById` logs the id under the wrong key — `slog.String("category_id", id)` in a TODO handler (`controller/todo_controller.go:128`); should be `"id"`.
+- `Update` success logs `todolist.TID` (body value) instead of the path id actually used (ties into 1.6).
+- Every handler passes `context.Background()` to `LogAttrs` instead of `r.Context()`, so logs can't be correlated to a request once request-scoped context/trace IDs exist (7.2). Prefer `r.Context()`. Optional, but worth a stub for a service intended to grow.
 
 ---
 
 ## 8. Naming, Conventions & Code Quality
 
-### 8.1 [High] [Open] JSON tag typo `cayegoryid`
+### 8.1 [High] [Resolved] JSON tag typo `cayegoryid`
 
 ```16:23:model/model.go
-type TODO struct {
+type Todo struct {
 	TID          string    `json:"tid"`
 	Activity     string    `json:"activity"`
 	Description  string    `json:"description"`
-	CreationDate time.Time `json:"creationdate"`
-	IsDone       bool      `json:"isdone"`
-	CategoryID   string    `json:"cayegoryid"`
+	CreationDate time.Time `json:"creation_date"`
+	IsDone       bool      `json:"is_done"`
+	CategoryID   string    `json:"category_id"`
 }
 ```
 
-**Status: Open.** The JSON field is still misspelled; API clients must send `cayegoryid`. Fix to `json:"category_id"` (and pick a consistent casing convention for all tags).
+**Status: Resolved.** The tag is now correctly `json:"category_id"` (the earlier `cayegoryid` → `cayegory_id` → `category_id` progression is complete).
 
-### 8.2 [Medium] [Open] Inconsistent method naming: `GetById` vs `GetByID`
+### 8.2 [Medium] [Resolved] Inconsistent method naming: `GetById` vs `GetByID`
 
-**Status: Open.** The TODO repository uses `GetById`; the Category repository uses `GetByID`. Go convention is `ID` (initialism uppercased): `GetByID`. Standardize across interfaces and implementations.
+**Status: Resolved.** Both `TodoRepository` and `CategoryRepository` (and their implementations and callers) now use `GetById` consistently. Note: they standardized on `GetById` rather than the Go-idiomatic initialism `GetByID`, so a future polish pass could rename to `GetByID` — but the inconsistency this item flagged is gone.
 
-### 8.3 [Medium] [Open] Inconsistent JSON tag style
+### 8.3 [Medium] [Resolved] Inconsistent JSON tag style
 
-**Status: Open.** Tags are lowercase, no separators: `creationdate`, `isdone`. Prefer snake_case (`creation_date`, `is_done`) or camelCase consistently.
+**Status: Resolved.** Multi-word tags are now consistent snake_case: `creation_date`, `is_done` (`model/model.go:20-21`). Single-word tags remain lowercase, which is consistent with snake_case.
 
 ### 8.4 [Medium] [Open] Inconsistent receiver/parameter naming
 
-**Status: Open.** `CategoryMap.Create(Category model.Category)` still uses an exported-looking, type-shadowing parameter name `Category`; elsewhere it's lowercase `category`. Use short, consistent, lowercase receiver and parameter names.
+**Status: Open.** `CategoryMap.Create` was fixed to a lowercase `category` parameter, but the exported-looking, type-shadowing parameter just moved to the TODO side: `TodoMap.Create(Todo model.Todo)` and `TodoMap.Update(tid string, Todo model.Todo)` (`in_memory_todo.go:23,45`), plus a capitalized local `var Todolist` in the controllers. Use short, consistent, lowercase parameter/variable names.
 
-### 8.5 [Low] [Partial] Type/file naming
+### 8.5 [Low] [Resolved] Type/file naming
 
-- **Open:** `TODOController` vs `CategoryController` — acronym casing differs from the type style elsewhere; consider `TodoController` for consistency with `TodoMap`.
+- **Resolved:** `TODOController` was renamed to `TodoController`, consistent with `TodoMap` / `TodoRepository`.
 - **Resolved:** The README no longer references `memorystore/in_memory.go`; it now correctly lists `in_memory_todo.go` and `in_memory_category.go`.
 
 ### 8.6 [Low] [Open] Stray files and comments
@@ -354,24 +538,29 @@ flowchart LR
 
 ## 11. Priority Checklist
 
-Done since the original review:
+Closed since the original review:
 
 - [x] Add `return` after every `http.Error` (1.1).
 - [x] Fix `GetAll` slice allocation (1.2).
 - [x] Standardize not-found errors via sentinels (1.5).
 - [x] Move controllers out of `package main` into a `controller` package (2.4).
+- [x] RESTful routing under `/api/v1/*` with correct verbs (4.2).
 - [x] Check the `ListenAndServe` error (6.1).
 - [x] Replace `fmt.Println` with structured `slog` logging (7.1).
+- [x] Consistent `GetById` naming across repositories (8.2).
+- [x] Consistent snake_case JSON tags (8.3).
+- [x] Fix JSON tag typo to `category_id` (8.1).
+- [x] Consistent type naming (`TodoController`) (8.5).
 
 Still outstanding (highest priority first):
 
-1. Fix empty-store handling — return `[]` not an error (1.3).
-2. Use `RLock` for read methods (1.4).
+1. **Reconcile the path id with the body id in `Update`** — currently a record-overwrite / mass-assignment bug (1.6).
+2. Stop trusting client-supplied state: server-side ids/`CreationDate`, narrow input DTOs (2.2, 5.6).
 3. Map errors to correct HTTP status codes; stop leaking `err.Error()` (4.1, 5.1).
-4. Generate IDs and `CreationDate` server-side; add input validation (2.2, 5.4).
-5. Add server timeouts and graceful shutdown (5.3, 6.2).
-6. Add recovery/logging middleware (7.2).
-7. Fix JSON tag typo `cayegoryid` and `GetById`/`GetByID` naming (8.1, 8.2).
-8. Add unit and handler tests (9.1).
-9. Introduce a service layer (2.1).
-10. Plan a persistent storage adapter for durability/horizontal scaling (3.1).
+4. Fix empty-store handling — return `[]` not an error (1.3).
+5. Use `RLock` for read methods (1.4).
+6. Add input validation + body size limit / strict decoding (5.4, 4.4).
+7. Add server timeouts and graceful shutdown (5.3, 6.2).
+8. Add auth/ownership; add recovery + logging middleware (5.2, 7.2).
+9. Fix parameter/variable naming and log-attribute bugs (8.4, 7.4).
+10. Add unit and handler tests (9.1); introduce a service layer (2.1); plan a persistent adapter (3.1).
