@@ -43,7 +43,7 @@ jobs:
         with:
           args: >
             -Dsonar.organization=zaagpro
-            -Dsonar.projectKey=rahulkrishnanfs_todolist
+            -Dsonar.projectKey=rahulkrishnanfs
             -Dsonar.sources=.
             -Dsonar.tests=.
             -Dsonar.go.coverage.reportPaths=coverage.out
