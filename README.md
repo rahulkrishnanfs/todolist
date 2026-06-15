@@ -14,10 +14,10 @@ Currently the project ships with an in-memory store and an HTTP REST API
 
 ## Features
 
-- Domain models for `TODO` items and `Category` groupings.
-- Repository interfaces (`ToDoRepository`, `CategoryRepository`) acting as ports.
+- Domain models for `Todo` items and `Category` groupings.
+- Repository interfaces (`TodoRepository`, `CategoryRepository`) acting as ports.
 - In-memory adapter implementation (`TodoMap`, `CategoryMap`).
-- Controllers (`TODOController`, `CategoryController`) that depend on the
+- Controllers (`TodoController`, `CategoryController`) that depend on the
   abstractions, not concrete storage.
 - Structured JSON logging via `log/slog`, created in `main` and injected into
   the controllers.
@@ -35,7 +35,7 @@ todolist/
 │   ├── routes.go               # ToDoRoutes: registers /api/v1/todos handlers
 │   └── category_routes.go      # CategoryRoutes: registers /api/v1/categories handlers
 ├── controller/
-│   ├── todo_controller.go      # TODOController (depends on ToDoRepository)
+│   ├── todo_controller.go      # TodoController (depends on TodoRepository)
 │   └── category_controller.go  # CategoryController (depends on CategoryRepository)
 ├── memorystore/
 │   ├── in_memory_todo.go       # In-memory adapter: TodoMap
@@ -78,7 +78,7 @@ Example:
 ```bash
 curl -X POST localhost:8080/api/v1/todos \
   -H 'Content-Type: application/json' \
-  -d '{"tid":"1","activity":"Write docs","description":"Update README","isdone":false}'
+  -d '{"tid":"1","activity":"Write docs","description":"Update README","is_done":false}'
 
 curl localhost:8080/api/v1/todos
 ```
@@ -91,12 +91,12 @@ The application follows a ports-and-adapters layout:
   routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
-- Repository interfaces (`ToDoRepository`, `CategoryRepository`) are the
+- Repository interfaces (`TodoRepository`, `CategoryRepository`) are the
   **ports** defined alongside the domain model.
 - The in-memory store (`TodoMap`, `CategoryMap`) is one **adapter**
   implementing those ports. Other adapters (e.g. SQL, file) could be added
   without changing controllers or domain logic.
-- Domain models (`TODO`, `Category`) are persistence-independent.
+- Domain models (`Todo`, `Category`) are persistence-independent.
 - A `*slog.Logger` (JSON handler writing to stdout) is constructed in
   `cmd/main.go` and injected into both controllers, which emit structured logs
   for each request.
@@ -151,13 +151,13 @@ flowchart TD
     end
 
     subgraph handlers [Controllers - controller package]
-        todoCtrl["TODOController<br/>[Component]<br/>HTTP handlers for TODO use cases"]
+        todoCtrl["TodoController<br/>[Component]<br/>HTTP handlers for Todo use cases"]
         catCtrl["CategoryController<br/>[Component]<br/>HTTP handlers for Category use cases"]
     end
 
     subgraph ports [Ports - model package]
-        todoRepo["ToDoRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
-        catRepo["CategoryRepository<br/>[Interface]<br/>Create / Update / Delete / GetByID / GetAll"]
+        todoRepo["TodoRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
+        catRepo["CategoryRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
     end
 
     subgraph adapters [Adapters - memorystore package]
@@ -166,7 +166,7 @@ flowchart TD
     end
 
     subgraph domain [Domain - model package]
-        todoModel["TODO<br/>[Entity]"]
+        todoModel["Todo<br/>[Entity]"]
         catModel["Category<br/>[Entity]"]
         errs["Sentinel errors<br/>[ErrObjectNotFound, ErrObjectAlreadyExists, ErrStoreEmpty]"]
     end
@@ -197,13 +197,15 @@ flowchart TD
 
 ## Developer Tooling (Cursor Skills)
 
-This repo ships [Cursor](https://cursor.com) Agent Skills under `.cursor/skills/`.
-They are committed to the repository, so every contributor working in Cursor gets
-the same workflows automatically.
+This repo includes [Cursor](https://cursor.com) Agent Skills under `.cursor/skills/`.
+Each skill lives in `.cursor/skills/<name>/SKILL.md` and is invoked by name in the
+Cursor agent.
 
 | Skill | What it does | How to use |
 | --- | --- | --- |
-| `commit-with-issue` | Creates a Conventional Commit linked to a GitHub issue and a matching `feature/#[issue]-[branch]` branch. | In the Cursor agent, run `/commit-with-issue`. |
+| `commit-with-issue` | Creates a Conventional Commit linked to a GitHub issue and a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
+| `code-review-update` | Re-scans the source and updates `docs/codereview.md` (finding statuses + new findings) from architect, senior-engineer, hacker, and security perspectives. Writes only that file. | `/code-review-update` |
+| `readme-update` | Re-scans the source and updates this `README.md` (structure, API, C4 diagrams, tooling) to stay accurate for newcomers. Writes only this file. | `/readme-update` |
 
 ### `commit-with-issue`
 
@@ -225,6 +227,21 @@ git config user.email "you@example.com"
 
 The skill definitions live in `.cursor/skills/<skill-name>/SKILL.md` — read or edit
 them there to adjust the workflow.
+
+### `code-review-update`
+
+Run `/code-review-update` to refresh [`docs/codereview.md`](docs/codereview.md). It
+re-scans the source, re-verifies each existing finding (flipping its status to
+Resolved / Partial / Open), and adds new findings reviewed from four perspectives:
+software architect, senior expert programmer, hacker/attacker, and security expert.
+It only ever writes `docs/codereview.md`.
+
+### `readme-update`
+
+Run `/readme-update` to refresh this README from the code. It reconciles the
+overview, project structure, API endpoints, architecture, and C4 diagrams with the
+source, and keeps this Developer Tooling table in sync. It only ever writes
+`README.md`.
 
 ## Roadmap / Future Work
 

@@ -2,28 +2,90 @@
 
 A deep review of the Go TODO-list service. Findings are grouped by aspect and ordered roughly by severity within each section. Each item cites the relevant file and gives a concrete recommendation.
 
-Severity legend: **[Critical]** can cause data loss/incorrect behavior/security exposure, **[High]** important correctness/design issue, **[Medium]** quality/maintainability, **[Low]** polish.
+Each finding is presented as a ticket-ready table (severity, status, location, how to reproduce, suggested fix) so it can be dropped straight into JIRA or a GitHub issue. The **Findings index** below is a triage table over every item.
 
-Status legend (added on re-review): **[Resolved]** fixed in current code, **[Partial]** partly addressed, **[Open]** still outstanding.
+Severity legend: **Critical** can cause data loss/incorrect behavior/security exposure, **High** important correctness/design issue, **Medium** quality/maintainability, **Low** polish.
+
+Status legend: **Resolved** fixed in current code, **Partial** partly addressed, **Open** still outstanding.
 
 > **Re-review note (2026-06-15):** The codebase changed since the original review. Notable changes:
 > - Controllers moved out of `package main` into a dedicated `controller/` package.
 > - Structured logging (`log/slog`) added and injected into controllers.
 > - Routes refactored to RESTful resource paths under `/api/v1/*` (closes 4.2).
 > - `Update` now takes the id from the path: `Update(id string, obj)` — but the body id is not reconciled with the path id, which introduces a **new** integrity bug (see 1.6).
-> - A naming refactor renamed `TODO` → `Todo`, `TODOController` → `TodoController`, `ToDoRepository` → `TodoRepository`, and standardized `GetByID` → `GetById` across both repositories. JSON tags moved to snake_case (`creation_date`, `is_done`). Some historical code citations below still use the old `TODO`/`cayegoryid` spellings.
+> - A naming refactor renamed `TODO` → `Todo`, `TODOController` → `TodoController`, `ToDoRepository` → `TodoRepository`, and standardized `GetByID` → `GetById` across both repositories. JSON tags moved to snake_case (`creation_date`, `is_done`).
 >
-> Each item below is annotated with its current status (`[Resolved]` = closed). Some original code citations referenced `cmd/category_controller.go`, which is now `controller/category_controller.go`. A deeper, attacker-focused pass was added in section 5 and a new correctness item (1.6).
+> Re-verification pass (2026-06-15): re-read all `.go` files plus `Dockerfile`, `.dockerignore`, `.github/workflows/`, and `go.mod`. No status changes — every finding was confirmed against current code. This pass modernized the doc's own stale symbol references (`model.TODO` → `model.Todo`, `*TODOController` → `*TodoController`, `GetByID` → `GetById`) in citations and example fixes so they match the renamed code, and cleaned up a few stray sentence fragments left over from earlier edits (5.6, 6.2, 7.4). Still confirmed: no tests (`9.1`), no `go.sum`/dependencies (`6.3`), no service layer (`2.1`), `Update` body-id reconciliation bug (`1.6`), read methods still take a write `Lock()` (`1.4`), and the empty-store `ErrStoreEmpty` 500 (`1.3`).
+>
+> Each item below is annotated with its current status (`Resolved` = closed). Some original code citations referenced `cmd/category_controller.go`, which is now `controller/category_controller.go`. A deeper, attacker-focused pass was added in section 5 and a new correctness item (1.6).
+>
+> Presentation pass (2026-06-15): findings are now rendered as tables — a master **Findings index** plus a per-finding `Field | Detail` table — so each row maps onto a JIRA/GitHub issue (severity, status, location, how to reproduce, suggested fix).
+
+---
+
+## Findings index
+
+| ID | Severity | Status | Lens | Issue | Location |
+| --- | --- | --- | --- | --- | --- |
+| [1.1](#11--handlers-continue-executing-after-httperror) | Critical | Resolved | Programmer | Handlers continue executing after `http.Error` | `controller/*.go` |
+| [1.2](#12--getall-returns-5-phantom-empty-structs) | Critical | Resolved | Programmer | `GetAll` returns 5 phantom empty structs | `memorystore/*.go` |
+| [1.3](#13--returning-an-error-for-an-empty-store) | High | Open | Programmer | Empty store returns an error (500) | `memorystore/in_memory_{todo,category}.go` |
+| [1.4](#14--reads-take-a-write-lock) | High | Open | Programmer | Reads take a write `Lock()` | `memorystore/in_memory_category.go:52-59` |
+| [1.5](#15--misleading-error-messages) | High | Resolved | Programmer | Misleading/inconsistent error messages | `model/model.go` |
+| [1.6](#16--update-does-not-reconcile-the-path-id-with-the-body-id) | Critical | Open | Hacker | `Update` ignores path/body id mismatch | `memorystore/in_memory_todo.go:45-55` |
+| [2.1](#21--missing-serviceuse-case-layer) | High | Open | Architect | Missing service/use-case layer | `controller/` |
+| [2.2](#22--client-supplies-primary-keys) | High | Open | Architect | Client supplies primary keys | `controller/`, `memorystore/` |
+| [2.3](#23--no-referential-integrity-between-todo-and-category) | Medium | Open | Architect | No Todo↔Category referential integrity | `model/model.go` |
+| [2.4](#24--controllers-live-in-package-main) | Medium | Resolved | Architect | Controllers were in `package main` | `controller/` |
+| [2.5](#25--no-contextcontext-propagation) | Medium | Open | Architect | No `context.Context` propagation | `model/model.go` |
+| [2.6](#26--update-upsert-vs-strict-update) | Low | Open | Architect | `PUT` upsert vs strict update undecided | `cmd/routes.go` |
+| [3.1](#31--in-memory-store-cannot-scale-horizontally) | High | Open | Architect | In-memory store can't scale horizontally | `memorystore/` |
+| [3.2](#32--lock-contention-with-a-single-global-mutex) | Medium | Open | Architect | Single global mutex contention | `memorystore/` |
+| [3.3](#33--no-request-level-concurrency-limits) | Low | Open | Architect | No request concurrency limits | `cmd/main.go` |
+| [4.1](#41--everything-returns-500) | High | Partial | API | Most errors return 500 | `controller/*.go` |
+| [4.2](#42--non-restful-routing-and-verbs) | Medium | Resolved | API | Non-RESTful routing/verbs | `cmd/routes.go` |
+| [4.3](#43--create-returns-no-body-or-location) | Medium | Partial | API | `Create` returns no body/`Location` | `controller/*.go` |
+| [4.4](#44--no-request-body-size-limit--strict-decoding) | Medium | Open | Security | No body size limit / strict decoding | `controller/*.go` |
+| [5.1](#51--internal-error-details-leaked-to-clients) | High | Open | Security | Internal error details leaked to clients | `controller/*.go` |
+| [5.2](#52--no-authentication--authorization) | High | Open | Security | No authentication/authorization | `cmd/`, `controller/` |
+| [5.3](#53--no-server-timeouts-slowloris-exposure) | Medium | Open | Security | No server timeouts (slowloris) | `cmd/main.go:22-25` |
+| [5.4](#54--no-input-validation) | Medium | Open | Security | No input validation | `controller/*.go` |
+| [5.5](#55--no-rate-limiting--cors-policy--security-headers) | Low | Open | Security | No rate limiting/CORS/headers | `cmd/main.go` |
+| [5.6](#56--mass-assignment--client-controls-server-owned-fields) | High | Open | Hacker | Mass assignment of server-owned fields | `controller/*.go` |
+| [6.1](#61--listenandserve-error-is-ignored) | High | Resolved | Ops | `ListenAndServe` error ignored | `cmd/main.go:27-31` |
+| [6.2](#62--no-graceful-shutdown) | High | Open | Ops | No graceful shutdown | `cmd/main.go` |
+| [6.3](#63--dockerfile-does-not-copy-gosum) | Medium | Open | Ops | Dockerfile doesn't copy `go.sum` | `Dockerfile:4-5` |
+| [6.4](#64--hardcoded-port-no-configuration) | Medium | Open | Ops | Hardcoded port, no config | `cmd/main.go` |
+| [6.5](#65--no-healthreadiness-endpoint) | Medium | Open | Ops | No health/readiness endpoint | `cmd/` |
+| [6.6](#66--no-healthcheck-in-dockerfile) | Low | Partial | Ops | No `HEALTHCHECK` in Dockerfile | `Dockerfile` |
+| [7.1](#71--fmtprintln-debugging-statements) | High | Resolved | Observability | `fmt.Println` debugging | `controller/*.go` |
+| [7.2](#72--no-request-logging--middleware) | Medium | Partial | Observability | No logging/recover middleware | `cmd/` |
+| [7.3](#73--no-metricstracing) | Low | Open | Observability | No metrics/tracing | `cmd/` |
+| [7.4](#74--incorrectmisleading-log-attributes-and-detached-context) | Low | Open | Observability | Incorrect log attributes/detached ctx | `controller/todo_controller.go:128` |
+| [8.1](#81--json-tag-typo-cayegoryid) | High | Resolved | Quality | JSON tag typo `cayegoryid` | `model/model.go:16-23` |
+| [8.2](#82--inconsistent-method-naming-getbyid-vs-getbyid) | Medium | Resolved | Quality | `GetById` vs `GetByID` inconsistency | `model/model.go` |
+| [8.3](#83--inconsistent-json-tag-style) | Medium | Resolved | Quality | Inconsistent JSON tag style | `model/model.go` |
+| [8.4](#84--inconsistent-receiverparameter-naming) | Medium | Open | Quality | Inconsistent receiver/param naming | `memorystore/in_memory_todo.go:23,45` |
+| [8.5](#85--typefile-naming) | Low | Resolved | Quality | Type/file naming | `controller/` |
+| [8.6](#86--stray-files-and-comments) | Low | Open | Quality | Stray files & misspellings | `model/model.go`, `docs/note.txt` |
+| [9.1](#91--no-tests-at-all) | High | Open | QA | No tests at all | repo-wide |
 
 ---
 
 ## 1. Correctness Bugs (fix these first)
 
-### 1.1 [Critical] [Resolved] Handlers continue executing after `http.Error`
+### 1.1 — Handlers continue executing after `http.Error`
 
-In every handler, `http.Error(...)` was called on error but there was no `return`. Execution fell through to the next statement, so the server could write a second response, dereference a zero value, or marshal/serve garbage after already sending an error.
-
-**Status: Resolved.** Every handler in `controller/todo_controller.go` and `controller/category_controller.go` now `return`s after `http.Error(...)`. For reference, the original (buggy) shape was:
+| Field | Detail |
+| --- | --- |
+| **Severity** | Critical |
+| **Status** | Resolved |
+| **Lens** | Programmer |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | `http.Error(...)` was called on error with no `return`, so execution fell through to the next statement. |
+| **Impact** | Server could write a second response, dereference a zero value, or marshal/serve garbage after already sending an error. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Every handler now `return`s after `http.Error(...)`. Original buggy shape shown below. |
 
 ```go
 func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
@@ -41,25 +103,37 @@ func (c *CategoryController) Create(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-### 1.2 [Critical] [Resolved] `GetAll` returns 5 phantom empty structs
+### 1.2 — `GetAll` returns 5 phantom empty structs
 
-`make([]model.Category, 5)` created a slice of length 5 (five zero-valued structs), then `append` added the real data after them, so callers got 5 empty objects + the actual records.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Critical |
+| **Status** | Resolved |
+| **Lens** | Programmer |
+| **Location** | `memorystore/in_memory_todo.go`, `memorystore/in_memory_category.go` |
+| **Issue** | `make([]model.Category, 5)` created a slice of length 5 (five zero-valued structs), then `append` added the real data after them. |
+| **Impact** | Callers got 5 empty objects prepended to the actual records. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Both `GetAll` methods now use `make([]model.Category, 0)` / `make([]model.Todo, 0)`; could still pre-size with `len(c.store)`. |
 
-**Status: Resolved.** Both `GetAll` methods now use `make([]model.Category, 0)` / `make([]model.TODO, 0)`. (Could still pre-size with `len(c.store)` as a micro-optimization, but the correctness bug is gone.)
+### 1.3 — Returning an error for an empty store
 
-### 1.3 [High] [Open] Returning an error for an empty store
-
-`GetAll` returns `model.ErrStoreEmpty` when there are no records. An empty collection is a valid result (HTTP 200 with `[]`), not an error. Returning an error here forces a 500 for the normal "no data yet" case.
-
-**Status: Open.** Both `in_memory_category.go` and `in_memory_todo.go` still `return nil, model.ErrStoreEmpty` on an empty store, and the controllers map any `GetAll` error to `500` — so an empty list currently yields a 500.
-
-Fix: return an empty slice and `nil` error when the store is empty:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Programmer |
+| **Location** | `memorystore/in_memory_todo.go`, `memorystore/in_memory_category.go` (`GetAll`) |
+| **Issue** | `GetAll` returns `model.ErrStoreEmpty` when there are no records; an empty collection is a valid result (200 with `[]`), not an error. Controllers map any `GetAll` error to `500`. |
+| **Impact** | The normal "no data yet" case yields HTTP 500 instead of an empty list. |
+| **How to reproduce** | On a freshly started server: `curl -i localhost:8080/api/v1/todos` → expect `200 []`, actual `500`. |
+| **Suggested fix** | Return an empty slice and `nil` error when the store is empty; then drop `ErrStoreEmpty`. See sample below. |
 
 ```go
-func (t *TodoMap) GetAll() ([]model.TODO, error) {
+func (t *TodoMap) GetAll() ([]model.Todo, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	todos := make([]model.TODO, 0, len(t.store)) // also pre-sizes (1.2)
+	todos := make([]model.Todo, 0, len(t.store)) // also pre-sizes (1.2)
 	for _, v := range t.store {
 		todos = append(todos, v)
 	}
@@ -69,14 +143,21 @@ func (t *TodoMap) GetAll() ([]model.TODO, error) {
 
 You can then drop `ErrStoreEmpty` entirely.
 
-### 1.4 [High] [Open] Reads take a write lock
+### 1.4 — Reads take a write lock
 
-The struct uses `sync.RWMutex`, but `GetByID` and `GetAll` call `Lock()` (exclusive) instead of `RLock()`. This serializes all reads unnecessarily and defeats the purpose of `RWMutex`.
-
-**Status: Open.** Still present:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Programmer |
+| **Location** | `memorystore/in_memory_category.go:52-59`, plus `GetById`/`GetAll` in both stores |
+| **Issue** | The struct uses `sync.RWMutex`, but `GetById` and `GetAll` call `Lock()` (exclusive) instead of `RLock()`. |
+| **Impact** | All reads are serialized unnecessarily, defeating the purpose of `RWMutex` under read-heavy load. |
+| **How to reproduce** | Run concurrent `GET` requests under load and observe reads block each other; visible as throughput that doesn't scale with readers. |
+| **Suggested fix** | Use `RLock()`/`RUnlock()` in read-only methods. Current code and fix below. |
 
 ```52:59:memorystore/in_memory_category.go
-func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
+func (c *CategoryMap) GetById(cid string) (model.Category, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.store[cid]; ok {
@@ -86,10 +167,10 @@ func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
 }
 ```
 
-Fix: use `c.mu.RLock()` / `defer c.mu.RUnlock()` in read-only methods (`GetByID`, `GetAll`, both stores):
+Fix: use `c.mu.RLock()` / `defer c.mu.RUnlock()` in read-only methods (`GetById`, `GetAll`, both stores):
 
 ```go
-func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
+func (c *CategoryMap) GetById(cid string) (model.Category, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if v, ok := c.store[cid]; ok {
@@ -99,22 +180,40 @@ func (c *CategoryMap) GetByID(cid string) (model.Category, error) {
 }
 ```
 
-### 1.5 [High] [Resolved] Misleading error messages
+### 1.5 — Misleading error messages
 
-`GetById` in the todo store used to return `"Store is empty"` when a single ID was missing, and `Delete`/`Update` used `"ID not found in the map "` (trailing space, leaking internal detail). Messages were inconsistent across the two stores.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Resolved |
+| **Lens** | Programmer |
+| **Location** | `model/model.go`, `memorystore/*.go` |
+| **Issue** | `GetById` in the todo store used to return `"Store is empty"` for a missing ID, and `Delete`/`Update` used `"ID not found in the map "` (trailing space, leaking internal detail); messages differed across stores. |
+| **Impact** | Inconsistent, leaky error strings that handlers couldn't reliably map to status codes. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | `model/model.go` now defines sentinel errors (`ErrObjectAlreadyExists`, `ErrObjectNotFound`, `ErrStoreEmpty`) returned consistently; handlers can `errors.Is` them (see 4.1). |
 
-**Status: Resolved.** `model/model.go` now defines sentinel errors (`ErrObjectAlreadyExists`, `ErrObjectNotFound`, `ErrStoreEmpty`) and both stores return them consistently — exactly the recommended fix. Handlers can now `errors.Is` against these to map to proper HTTP status codes (see 4.1, still open).
+### 1.6 — `Update` does not reconcile the path id with the body id
 
-### 1.6 [Critical] [Open] `Update` does not reconcile the path id with the body id (record-overwrite / mass assignment)
+| Field | Detail |
+| --- | --- |
+| **Severity** | Critical |
+| **Status** | Open |
+| **Lens** | Hacker / Correctness |
+| **Location** | `memorystore/in_memory_todo.go:45-55`, `memorystore/in_memory_category.go` |
+| **Issue** | When `Update` was changed to take the id from the path, the store began writing the *body* object verbatim under that key without checking that `body.TID`/`body.CID` matches the path id. |
+| **Impact** | Map key and entity id disagree (corrupts `GetById`/serialization); classic mass-assignment foothold — the client controls every persisted field; with no auth (5.2), any caller can rewrite arbitrary records. |
+| **How to reproduce** | `curl -X PUT localhost:8080/api/v1/todos/A -d '{"tid":"B","activity":"x"}'` → a record is stored under key `A` whose internal `TID` is `B`; `GET /api/v1/todos/A` then returns an object whose id is `B`. |
+| **Suggested fix** | Treat the path id as authoritative: set `in.TID = id` before storing (or reject when `body.TID != "" && body.TID != id`). Current code and fix below. |
 
-This is a **new** bug introduced when `Update` was changed to take the id from the URL path. The handler reads the id from the path, but the store writes the *body* object verbatim under that key — without checking that `body.TID` (or `body.CID`) matches the path id, and without forcing them to agree:
+The store writes the body object verbatim under the path key:
 
 ```45:55:memorystore/in_memory_todo.go
-func (t *TodoMap) Update(tid string, todo model.TODO) error {
+func (t *TodoMap) Update(tid string, Todo model.Todo) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.store[tid]; ok {
-		t.store[tid] = todo // todo.TID comes from the body and may differ from tid
+		t.store[tid] = Todo // Todo.TID comes from the body and may differ from tid
 		return nil
 	} else {
 		return model.ErrObjectNotFound
@@ -122,20 +221,12 @@ func (t *TodoMap) Update(tid string, todo model.TODO) error {
 }
 ```
 
-Concretely, `PUT /api/v1/todos/A` with body `{"tid":"B", ...}` stores a record under key `A` whose internal `TID` field is `B`. The map key and the entity id now disagree, which:
-
-- breaks the invariant "the object stored at key X has id X" and corrupts any later `GetById`/serialization logic that trusts `TID`;
-- is a classic **mass-assignment** foothold — the client controls every persisted field (including `CreationDate`, `IsDone`, `CategoryID`) with no server-side authority;
-- combined with no auth (5.2), lets a caller rewrite arbitrary records.
-
-The success log compounds the confusion: it logs `todolist.TID` (the body value), not the path id that was actually used as the key.
-
-**Fix:** treat the path id as authoritative and ignore/validate the body id. For example:
+The success log compounds the confusion: it logs `Todolist.TID` (the body value), not the path id used as the key. Suggested fix — treat the path id as authoritative and ignore/validate the body id:
 
 ```go
-func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
+func (t *TodoController) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var in model.TODO
+	var in model.Todo
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -156,25 +247,39 @@ func (t *TODOController) Update(w http.ResponseWriter, r *http.Request) {
 
 ## 2. System Design & Architecture
 
-### 2.1 [High] [Open] Missing service/use-case layer
+### 2.1 — Missing service/use-case layer
 
-**Status: Open.** Controllers call the repository directly. The README advertises hexagonal architecture, but there is no application/service layer to hold business rules (ID generation, validation, setting `CreationDate`, enforcing that a TODO's `CategoryID` exists). Business logic currently has nowhere to live and would leak into HTTP handlers.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Controllers call the repository directly. The README advertises hexagonal architecture, but there is no application/service layer for business rules (ID generation, validation, setting `CreationDate`, enforcing `CategoryID` exists). |
+| **Impact** | Business logic has nowhere to live and leaks into HTTP handlers. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Introduce a `service` package: `Controller -> Service -> Repository`. Controllers handle HTTP only; services own rules; repositories own persistence. |
 
-Recommendation: introduce a `service` package: `Controller -> Service -> Repository`. Controllers handle HTTP only (decode/encode, status codes); services own rules; repositories own persistence.
+### 2.2 — Client supplies primary keys (`TID`/`CID`)
 
-### 2.2 [High] [Open] Client supplies primary keys (`TID`/`CID`)
-
-**Status: Open.** `Create` still takes the id (and every other field) from the request body. Two problems: clients can overwrite/squat on records by choosing an ID, and `Create` rejects with `ErrObjectAlreadyExists` rather than minting an ID. `Update` now at least takes the id from the path, but the body id is still trusted (see 1.6), and `CreationDate`/`IsDone` are entirely client-controlled (mass assignment).
-
-Recommendation: generate IDs server-side inside the service layer, ignore any client-supplied ID, and set `CreationDate` server-side:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Architect / Hacker |
+| **Location** | `controller/*.go`, `memorystore/*.go` |
+| **Issue** | `Create` takes the id (and every other field) from the request body; clients can squat on/overwrite records by choosing an ID, and `Create` rejects with `ErrObjectAlreadyExists` rather than minting an ID. `CreationDate`/`IsDone` are client-controlled. |
+| **Impact** | ID squatting, mass assignment, and unusable create semantics. |
+| **How to reproduce** | `curl -X POST localhost:8080/api/v1/todos -d '{"tid":"chosen-id","is_done":true}'` → record persisted with a client-chosen id and pre-set state. |
+| **Suggested fix** | Generate IDs server-side in the service layer, ignore client-supplied IDs, set `CreationDate` server-side; accept only `activity`, `description`, `category_id`. See sample below. |
 
 ```go
-func (s *TodoService) Create(ctx context.Context, in model.TODO) (model.TODO, error) {
+func (s *TodoService) Create(ctx context.Context, in model.Todo) (model.Todo, error) {
 	in.TID = uuid.NewString()       // server-authoritative id
 	in.CreationDate = time.Now().UTC()
 	in.IsDone = false               // don't let the client preset state
 	if err := validate(in); err != nil { // see 5.4
-		return model.TODO{}, err
+		return model.Todo{}, err
 	}
 	return in, s.repo.Create(ctx, in)
 }
@@ -182,64 +287,117 @@ func (s *TodoService) Create(ctx context.Context, in model.TODO) (model.TODO, er
 
 Accept only `activity`, `description`, and `category_id` from the client; derive everything else.
 
-### 2.3 [Medium] [Open] No referential integrity between TODO and Category
+### 2.3 — No referential integrity between TODO and Category
 
-**Status: Open.** `TODO.CategoryID` is free text; nothing validates the category exists. The domain says "TODO belongs to Category" but it is unenforced.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `model/model.go`, `memorystore/*.go` |
+| **Issue** | `Todo.CategoryID` is free text; nothing validates the category exists. The domain says "Todo belongs to Category" but it is unenforced. |
+| **Impact** | Todos can reference non-existent categories (orphan data). |
+| **How to reproduce** | `curl -X POST localhost:8080/api/v1/todos -d '{"category_id":"does-not-exist","activity":"x"}'` → accepted. |
+| **Suggested fix** | Validate `CategoryID` against the category repository on create/update. |
 
-Recommendation: validate `CategoryID` against the category repository on create/update.
+### 2.4 — Controllers live in `package main`
 
-### 2.4 [Medium] [Resolved] Controllers live in `package main`
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Resolved |
+| **Lens** | Architect |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Controllers used to live in `cmd` under `package main`, so they couldn't be imported or unit-tested from elsewhere. |
+| **Impact** | Untestable, non-reusable controllers. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Controllers now live in their own `controller` package and `cmd/main.go` is wiring only. (A `service` layer is still missing — see 2.1.) |
 
-`TODOController`/`CategoryController` used to be in `cmd` under `package main`, so they couldn't be imported or unit-tested from elsewhere.
+### 2.5 — No `context.Context` propagation
 
-**Status: Resolved.** Controllers now live in their own `controller` package (`controller/todo_controller.go`, `controller/category_controller.go`), and `cmd/main.go` is wiring only. (A separate `service` layer is still missing — see 2.1.)
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `model/model.go` (repository interfaces) |
+| **Issue** | Repository interfaces don't take `context.Context`. Controllers use `context.Background()` for logging; the request context is never threaded to the store. |
+| **Impact** | A real datastore adapter (SQL, etc.) can't do cancellation/timeouts/tracing; adding context later is a breaking change to every method. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Change signatures now to `Create(ctx context.Context, ...)`, etc., and pass `r.Context()` from handlers. |
 
-### 2.5 [Medium] [Open] No `context.Context` propagation
+### 2.6 — `Update` upsert vs strict update
 
-**Status: Open.** Repository interfaces don't take `context.Context`. (Controllers do use `context.Background()` for logging, but the request context is never threaded through to the store.) A real datastore adapter (SQL, etc.) needs context for cancellation/timeouts/tracing. Adding it later is a breaking change to every method.
-
-Recommendation: change signatures now to `Create(ctx context.Context, ...)`, etc., and pass `r.Context()` from handlers.
-
-### 2.6 [Low] [Open] `Update` is a true upsert vs strict update — decide intent
-
-**Status: Open.** `Update` is now `PUT /api/v1/{resource}/{id}` and returns `ErrObjectNotFound` when the id is absent (i.e. strict update, not create-on-PUT). That's a reasonable choice, but it isn't documented, and strict `PUT` semantics are unusual (idempotent `PUT` often implies upsert). Decide and document: either keep strict update (and return `404`, see 4.1) or make `PUT` a true upsert. Either way, fix the body-id reconciliation in 1.6 first.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `cmd/routes.go`, `memorystore/*.go` |
+| **Issue** | `Update` is `PUT /api/v1/{resource}/{id}` and returns `ErrObjectNotFound` when absent (strict update), but this isn't documented and strict `PUT` is unusual (idempotent `PUT` often implies upsert). |
+| **Impact** | Ambiguous/undocumented API semantics. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Decide and document: keep strict update (return `404`, see 4.1) or make `PUT` a true upsert. Fix the body-id reconciliation in 1.6 first. |
 
 ---
 
 ## 3. Concurrency & Scalability
 
-### 3.1 [High] [Open] In-memory store cannot scale horizontally
+### 3.1 — In-memory store cannot scale horizontally
 
-**Status: Open.** All state lives in process-local maps. Running more than one replica (behind a load balancer) means each instance has different data; restarts lose everything. This caps you at a single instance and zero durability.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `memorystore/in_memory_todo.go`, `memorystore/in_memory_category.go` |
+| **Issue** | All state lives in process-local maps. Running more than one replica behind a load balancer means each instance has different data; restarts lose everything. |
+| **Impact** | Caps you at a single instance with zero durability. |
+| **How to reproduce** | Run two replicas; create a todo on one, `GET` it from the other → not found. |
+| **Suggested fix** | Implement a persistent adapter (Postgres/SQLite/Redis) behind the existing repository interfaces — the intended extension point. |
 
-Recommendation: implement a persistent adapter (Postgres/SQLite/Redis) behind the existing repository interfaces. The ports are already there — this is the intended extension point.
+### 3.2 — Lock contention with a single global mutex
 
-### 3.2 [Medium] [Open] Lock contention with a single global mutex
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `memorystore/*.go` |
+| **Issue** | Each store has one `RWMutex` guarding the whole map. |
+| **Impact** | Under very high write load a single mutex becomes a bottleneck (fine at this scale). |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Fixing 1.4 (read locks) is the first win; the persistent backend (3.1) is the real concurrency story. |
 
-**Status: Open.** Each store has one `RWMutex` guarding the whole map. Fixing 1.4 (read locks, still open) is the first win. Under very high write load a single mutex becomes a bottleneck, but for this scale it's fine — the persistent backend (3.1) is the real concurrency story.
+### 3.3 — No request-level concurrency limits
 
-### 3.3 [Low] [Open] No request-level concurrency limits
-
-**Status: Open.** There is no max in-flight request limit or backpressure. With a real datastore you'd want connection pooling and a bounded worker model. Note for later.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Architect |
+| **Location** | `cmd/main.go` |
+| **Issue** | There is no max in-flight request limit or backpressure. |
+| **Impact** | With a real datastore, unbounded concurrency can exhaust connections. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Add connection pooling and a bounded worker model once a real datastore exists. |
 
 ---
 
 ## 4. HTTP API Design
 
-### 4.1 [High] [Partial] Everything returns 500
+### 4.1 — Everything returns 500
 
-Most errors map to `http.StatusInternalServerError`, including "not found" and (in the TODO controller) bad JSON. This makes the API unusable for clients and hides real server faults.
-
-**Status: Partial.** `CategoryController` now returns `400 Bad Request` on JSON decode errors, but `TODOController` decode errors are still `500`, and not-found errors from the store (`Delete`/`Update`/`GetById`) still map to `500` in both controllers. The sentinel errors from 1.5 now make proper mapping straightforward.
-
-Recommendation:
-
-- Bad/invalid JSON or validation failure -> `400 Bad Request`.
-- Not found -> `404 Not Found`.
-- Duplicate on create -> `409 Conflict`.
-- Genuine unexpected errors -> `500` (and log internally, don't echo `err.Error()` to the client; see 5.1).
-
-Map the sentinel errors from 1.5 with `errors.Is` and a small JSON helper, e.g.:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Partial |
+| **Lens** | API design |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Most errors map to `500`, including "not found" and (in the Todo controller) bad JSON. `CategoryController` now returns `400` on decode errors, but `TodoController` decode errors are still `500`, and not-found from the store still maps to `500` in both. |
+| **Impact** | API unusable for clients; real server faults are hidden. |
+| **How to reproduce** | `curl -i -X PUT localhost:8080/api/v1/todos/missing -d '{}'` → `500` instead of `404`. |
+| **Suggested fix** | Map sentinel errors with `errors.Is`: bad JSON/validation → `400`, not found → `404`, duplicate → `409`, else `500` (log internally, don't echo `err.Error()`; see 5.1). See sample below. |
 
 ```go
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -262,29 +420,44 @@ func statusFor(err error) int {
 
 Then in a handler: `if err := t.store.Create(todo); err != nil { writeError(w, statusFor(err), "could not create todo"); return }`. Note the client message is generic; the detailed `err` only goes to the logs (5.1).
 
-### 4.2 [Medium] [Resolved] Non-RESTful routing and verbs
+### 4.2 — Non-RESTful routing and verbs
 
-The original routes used verbs in the path (`POST /api/todo/delete/{id}`, `GET /api/todo/getbyid/{id}`, etc.) and the wrong methods.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Resolved |
+| **Lens** | API design |
+| **Location** | `cmd/routes.go`, `cmd/category_routes.go` |
+| **Issue** | Original routes used verbs in the path (`POST /api/todo/delete/{id}`, `GET /api/todo/getbyid/{id}`) and the wrong methods. |
+| **Impact** | Non-idiomatic, confusing API surface. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Now RESTful under `/api/v1`: `POST /api/v1/todos`, `GET /api/v1/todos`, `GET/PUT/DELETE /api/v1/todos/{id}`, and the equivalent set under `/api/v1/categories`. |
 
-**Status: Resolved.** Both `cmd/routes.go` and `cmd/category_routes.go` now use RESTful resource paths under `/api/v1` with correct verbs:
+### 4.3 — `Create` returns no body or `Location`
 
-- `POST /api/v1/todos` (create)
-- `GET /api/v1/todos` (list)
-- `GET /api/v1/todos/{id}`
-- `PUT /api/v1/todos/{id}` (update)
-- `DELETE /api/v1/todos/{id}`
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Partial |
+| **Lens** | API design |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Handlers now write `201 Created` but send no response body or `Location` header. |
+| **Impact** | Clients can't learn the created resource (especially once IDs are server-generated). |
+| **How to reproduce** | `curl -i -X POST localhost:8080/api/v1/todos -d '{...}'` → `201` with empty body, no `Location`. |
+| **Suggested fix** | Return the created resource as JSON and set a `Location: /api/v1/todos/{id}` header. |
 
-…and the equivalent set under `/api/v1/categories`.
+### 4.4 — No request body size limit / strict decoding
 
-### 4.3 [Medium] [Partial] `Create` returns no body or `Location`
-
-**Status: Partial.** Handlers now write `201 Created`, but still send no response body or `Location` header. A create should return the created resource (especially once IDs are server-generated) and ideally a `Location` header.
-
-### 4.4 [Medium] [Open] No request body size limit / strict decoding
-
-**Status: Open.** `json.NewDecoder(r.Body).Decode` still accepts unknown fields and unbounded bodies. Unbounded bodies are a real memory-exhaustion DoS vector (see 5.4), so this is closer to Medium than Low.
-
-Recommendation: cap the body with `http.MaxBytesReader` and reject unknown fields:
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | `json.NewDecoder(r.Body).Decode` accepts unknown fields and unbounded bodies. |
+| **Impact** | Unbounded bodies are a memory-exhaustion DoS vector (see 5.4); unknown fields enable mass assignment. |
+| **How to reproduce** | `curl -X POST localhost:8080/api/v1/todos --data-binary @hugefile.json` → server reads the whole body into memory. |
+| **Suggested fix** | Cap the body with `http.MaxBytesReader` and call `dec.DisallowUnknownFields()`. See sample below. |
 
 ```go
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) error {
@@ -301,13 +474,18 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) error {
 
 ## 5. Security
 
-### 5.1 [High] [Open] Internal error details leaked to clients
+### 5.1 — Internal error details leaked to clients
 
-`http.Error(w, err.Error(), ...)` sends raw internal error strings to the caller. This can leak storage internals and aids attackers.
-
-**Status: Open.** Errors are now also logged server-side via `slog` (good), but every handler still does `http.Error(w, err.Error(), ...)`, so the raw error is echoed to the client. For example, a malformed JSON body returns the exact `encoding/json` parser message, revealing internal field types and offsets.
-
-Recommendation: log the detailed error server-side; return a generic message to the client (the `writeError`/`statusFor` helpers from 4.1 do exactly this):
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Every handler does `http.Error(w, err.Error(), ...)`, echoing raw internal error strings to the caller (errors are also logged via `slog`, which is good). |
+| **Impact** | Leaks storage internals; a malformed JSON body returns the exact `encoding/json` parser message, revealing field types/offsets. |
+| **How to reproduce** | `curl -i -X POST localhost:8080/api/v1/todos -d '{bad json'` → response body contains the raw parser error. |
+| **Suggested fix** | Log the detailed error server-side; return a generic message via `writeError`/`statusFor` (4.1). See sample below. |
 
 ```go
 if err := t.store.Create(todo); err != nil {
@@ -317,13 +495,33 @@ if err := t.store.Create(todo); err != nil {
 }
 ```
 
-### 5.2 [High] [Open] No authentication / authorization
+### 5.2 — No authentication / authorization
 
-**Status: Open.** All endpoints are open. Anyone can read, modify, or delete any TODO/category. There is no concept of a user owning their data.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `cmd/`, `controller/` |
+| **Issue** | All endpoints are open; there is no concept of a user owning their data. |
+| **Impact** | Anyone can read, modify, or delete any todo/category (IDOR by default). |
+| **How to reproduce** | Any endpoint responds without credentials, e.g. `curl -X DELETE localhost:8080/api/v1/todos/{id}`. |
+| **Suggested fix** | Add auth (API key/JWT/session) and scope data per user. Even for a demo, document that it is unauthenticated. |
 
-Recommendation: add auth (API key/JWT/session) and scope data per user. Even for a demo, document that it is unauthenticated.
+### 5.3 — No server timeouts (slowloris exposure)
 
-### 5.3 [Medium] [Open] No server timeouts (slowloris exposure)
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `cmd/main.go:22-25` |
+| **Issue** | `http.Server` is created with no `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout`. |
+| **Impact** | A slow client can hold connections open indefinitely (slowloris DoS). |
+| **How to reproduce** | Open a connection and dribble headers slowly; the server keeps the connection open with no timeout. |
+| **Suggested fix** | Set sensible timeouts on `http.Server`. Current code and fix below. |
+
+Current code:
 
 ```22:25:cmd/main.go
 	server := &http.Server{
@@ -332,9 +530,7 @@ Recommendation: add auth (API key/JWT/session) and scope data per user. Even for
 	}
 ```
 
-No `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout`. A slow client can hold connections open indefinitely (slowloris).
-
-**Status: Open.** Recommendation: set sensible timeouts on `http.Server`:
+Suggested fix — set sensible timeouts on `http.Server`:
 
 ```go
 server := &http.Server{
@@ -347,36 +543,61 @@ server := &http.Server{
 }
 ```
 
-### 5.4 [Medium] [Open] No input validation
+### 5.4 — No input validation
 
-**Status: Open.** No checks that `Activity`/`Name` are non-empty, length-bounded, etc. Combined with no body size limit (4.4), this is a DoS/garbage-data vector.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | No checks that `Activity`/`Name` are non-empty, length-bounded, etc. |
+| **Impact** | Combined with no body size limit (4.4), a DoS/garbage-data vector. |
+| **How to reproduce** | `curl -X POST localhost:8080/api/v1/todos -d '{}'` → empty/garbage record persisted. |
+| **Suggested fix** | Validate required fields and bound lengths in the service layer before persisting. |
 
-### 5.5 [Low] [Open] No rate limiting / CORS policy / security headers
+### 5.5 — No rate limiting / CORS policy / security headers
 
-**Status: Open.** No throttling and no explicit CORS handling.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `cmd/main.go` |
+| **Issue** | No throttling, no explicit CORS handling, no security headers. |
+| **Impact** | Open to abuse/brute force; no browser-origin controls. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Add rate-limiting middleware and an explicit CORS/headers policy when exposing publicly. |
 
-### 5.6 [High] [Open] Mass assignment — client controls server-owned fields
+### 5.6 — Mass assignment — client controls server-owned fields
 
-**Status: Open (new, attacker-focused).** Because handlers decode the full struct straight from the request body and persist it, the client controls *every* field, including ones that should be server-authoritative:
-
-- `CreationDate` — a caller can backdate/forward-date records, poisoning any time-based logic or audit trail.
-- `IsDone` — can be preset on create.
-- `TID`/`CID` — id squatting and, via 1.6, overwriting an existing record's identity.
-- `CategoryID` — points anywhere, since nothing validates it (2.3).
-
-This is the textbook mass-assignment pattern. Combined with **no authentication (5.2)** there's also no ownership model, so it doubles as an IDOR: any caller can read, modify, or delete any record by id.
-
-**Fix:** don't bind the transport DTO directly to the domain object. Accept a narrow input DTO with only client-settable fields, and have the service set ids/timestamps/state server-side (see the `Create` example in 2.2). Add `dec.DisallowUnknownFields()` (4.4) so unexpected keys are rejected rather than silently ignored. Add as needed when exposing publicly.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Hacker / Security |
+| **Location** | `controller/todo_controller.go`, `controller/category_controller.go` |
+| **Issue** | Handlers decode the full struct straight from the body and persist it, so the client controls *every* field: `CreationDate` (backdating/audit poisoning), `IsDone` (preset on create), `TID`/`CID` (id squatting + overwrite via 1.6), `CategoryID` (points anywhere, 2.3). |
+| **Impact** | Textbook mass assignment; with no auth (5.2) it also doubles as an IDOR — any caller can read/modify/delete any record by id. |
+| **How to reproduce** | `curl -X POST localhost:8080/api/v1/todos -d '{"tid":"x","creation_date":"1999-01-01T00:00:00Z","is_done":true}'` → all fields persisted as sent. |
+| **Suggested fix** | Don't bind the transport DTO directly to the domain object; accept a narrow input DTO with only client-settable fields and set ids/timestamps/state server-side (see 2.2). Add `dec.DisallowUnknownFields()` (4.4). |
 
 ---
 
 ## 6. Deployment & Operations
 
-### 6.1 [High] [Resolved] `ListenAndServe` error is ignored
+### 6.1 — `ListenAndServe` error is ignored
 
-The original code called `server.ListenAndServe()` with no error check, so the process could exit silently.
-
-**Status: Resolved.** `cmd/main.go` now checks the error, logs it via `slog`, and exits non-zero:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Resolved |
+| **Lens** | Ops |
+| **Location** | `cmd/main.go:27-31` |
+| **Issue** | The original code called `server.ListenAndServe()` with no error check, so the process could exit silently. |
+| **Impact** | Silent crash with no signal to operators. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | `cmd/main.go` now checks the error, logs it via `slog`, and exits non-zero (shown below). Once 6.2 lands, treat `http.ErrServerClosed` as a clean exit. |
 
 ```27:31:cmd/main.go
 	if err := server.ListenAndServe(); err != nil {
@@ -388,9 +609,18 @@ The original code called `server.ListenAndServe()` with no error check, so the p
 
 (Once graceful shutdown is added per 6.2, treat `http.ErrServerClosed` as a clean exit.)
 
-### 6.2 [High] [Open] No graceful shutdown
+### 6.2 — No graceful shutdown
 
-**Status: Open.** There's no signal handling — and note that once you add it, the current `if err := server.ListenAndServe(); err != nil { os.Exit(1) }` in `main.go` will treat a clean shutdown as a failure, because `ListenAndServe` returns `http.ErrServerClosed`. Handle both together:
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Ops |
+| **Location** | `cmd/main.go` |
+| **Issue** | No signal handling. Also, once shutdown is added, the current `os.Exit(1)` path will treat a clean shutdown as failure since `ListenAndServe` returns `http.ErrServerClosed`. |
+| **Impact** | On SIGTERM (common in Kubernetes/containers) in-flight requests are dropped. |
+| **How to reproduce** | Send `SIGTERM` while a request is in flight → connection is cut instead of draining. |
+| **Suggested fix** | Listen for `os.Interrupt`/`SIGTERM` and call `server.Shutdown(ctx)` with a timeout; treat `http.ErrServerClosed` as clean. See sample below. |
 
 ```go
 ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -407,68 +637,137 @@ go func() {
 shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 defer cancel()
 _ = server.Shutdown(shutdownCtx)
-``` On SIGTERM (common in Kubernetes/containers) in-flight requests are dropped.
+```
 
-Recommendation: listen for `os.Interrupt`/`SIGTERM` and call `server.Shutdown(ctx)` with a timeout.
+### 6.3 — Dockerfile does not copy `go.sum`
 
-### 6.3 [Medium] [Open] Dockerfile does not copy `go.sum` and reduces build caching
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Ops |
+| **Location** | `Dockerfile:4-5` |
+| **Issue** | Only `go.mod` is copied (there is still no `go.sum`, as there are no dependencies yet). |
+| **Impact** | The moment a dependency is added, builds break or become non-reproducible without `go.sum`. |
+| **How to reproduce** | Add a dependency, then `docker build` → `go mod download` cannot verify modules. |
+| **Suggested fix** | `COPY go.mod go.sum ./` once a `go.sum` exists; the distroless/nonroot base and `CGO_ENABLED=0` are good. Consider `-ldflags="-s -w"`. Current code below. |
 
 ```4:5:Dockerfile
 COPY go.mod ./
 RUN go mod download
 ```
 
-**Status: Open.** Only `go.mod` is copied (there is still no `go.sum`, as there are no dependencies yet). There are currently no dependencies, but the moment one is added, builds break or become non-reproducible without `go.sum`.
+### 6.4 — Hardcoded port, no configuration
 
-Recommendation: `COPY go.mod go.sum ./` once a `go.sum` exists; the distroless/nonroot base and `CGO_ENABLED=0` choices are good. Consider adding a build flag `-ldflags="-s -w"` for smaller binaries.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Ops |
+| **Location** | `cmd/main.go` |
+| **Issue** | `:8080` is hardcoded; there is no env-based config. |
+| **Impact** | Can't run multiple instances/ports or configure per environment. |
+| **How to reproduce** | Set `PORT=9090` and start → server still binds `:8080`. |
+| **Suggested fix** | Read `PORT` (and other settings) from environment, with a sensible default. |
 
-### 6.4 [Medium] [Open] Hardcoded port, no configuration
+### 6.5 — No health/readiness endpoint
 
-**Status: Open.** `:8080` is hardcoded. No env-based config.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Ops |
+| **Location** | `cmd/` (routes) |
+| **Issue** | There is no `/healthz` or `/readyz`. |
+| **Impact** | Orchestrators have no liveness/readiness probe target. |
+| **How to reproduce** | `curl -i localhost:8080/healthz` → `404`. |
+| **Suggested fix** | Add lightweight `/healthz` (liveness) and `/readyz` (readiness) handlers returning `200`. |
 
-Recommendation: read `PORT` (and other settings) from environment, with a sensible default.
+### 6.6 — No `HEALTHCHECK` in Dockerfile
 
-### 6.5 [Medium] [Open] No health/readiness endpoint
-
-**Status: Open.** There is no `/healthz` or `/readyz`. Orchestrators need these for liveness/readiness probes.
-
-### 6.6 [Low] [Partial] No `HEALTHCHECK` in Dockerfile and no structured logging
-
-**Status: Partial.** Structured logging via `log/slog` is now in place (see 7.1). A container `HEALTHCHECK` is still missing.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Partial |
+| **Lens** | Ops |
+| **Location** | `Dockerfile` |
+| **Issue** | Structured logging via `log/slog` is now in place (see 7.1), but the container has no `HEALTHCHECK`. |
+| **Impact** | Container runtimes can't detect an unhealthy process. |
+| **How to reproduce** | `docker inspect` shows no healthcheck. |
+| **Suggested fix** | Add a `HEALTHCHECK` that probes `/healthz` (depends on 6.5). |
 
 ---
 
 ## 7. Observability & Logging
 
-### 7.1 [High] [Resolved] `fmt.Println` debugging statements
+### 7.1 — `fmt.Println` debugging statements
 
-The original controllers had `fmt.Println("request came here")` / `fmt.Println("somethings is having issue")` scattered throughout.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Resolved |
+| **Lens** | Observability |
+| **Location** | `controller/*.go`, `memorystore/in_memory_todo.go:31` |
+| **Issue** | The original controllers had `fmt.Println("request came here")` / `fmt.Println("somethings is having issue")` scattered throughout. |
+| **Impact** | Noisy, unstructured, unfiltered debug output in production. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Both controllers now use `*slog.Logger` with `LogAttrs`. One leftover: a commented-out `// fmt.Println(m.store, "......")` at `memorystore/in_memory_todo.go:31` could be deleted. |
 
-**Status: Resolved.** Both controllers now use a `*slog.Logger` with `LogAttrs` (levels + structured key/value attributes). One harmless leftover: a commented-out `// fmt.Println(m.store, "......")` at `memorystore/in_memory_todo.go:31` could be deleted.
+### 7.2 — No request logging / middleware
 
-### 7.2 [Medium] [Partial] No request logging / middleware
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Partial |
+| **Lens** | Observability |
+| **Location** | `cmd/main.go`, `cmd/routes.go` |
+| **Issue** | Handlers log per-operation via `slog`, but there is no middleware: no access logs, request IDs, or panic-recovery wrapper. |
+| **Impact** | An unhandled panic takes down the request with a stack trace and no recovery; no correlation across logs. |
+| **How to reproduce** | Trigger a panic in a handler → the connection drops with no recovery. |
+| **Suggested fix** | Add middleware for access logging, request IDs, and `recover()`. |
 
-**Status: Partial.** Handlers now log per-operation via `slog`, but there is still no middleware: no access logs, request IDs, or panic-recovery wrapper. An unhandled panic in a handler takes down the request with a stack trace and no recovery.
+### 7.3 — No metrics/tracing
 
-Recommendation: add middleware for logging, request IDs, and `recover()`.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Observability |
+| **Location** | `cmd/` |
+| **Issue** | No Prometheus metrics or tracing hooks. |
+| **Impact** | No visibility into latency, error rates, or traces. |
+| **How to reproduce** | n/a (design) |
+| **Suggested fix** | Expose `/metrics` and add OpenTelemetry tracing when the service grows. |
 
-### 7.3 [Low] [Open] No metrics/tracing
+### 7.4 — Incorrect/misleading log attributes and detached context
 
-**Status: Open.** No Prometheus metrics or tracing hooks.
-
-### 7.4 [Low] [Open] Incorrect/misleading log attributes and detached context
-
-**Status: Open (new).** A few logging-quality issues that hurt debuggability:
-
-- `TODOController.GetById` logs the id under the wrong key — `slog.String("category_id", id)` in a TODO handler (`controller/todo_controller.go:128`); should be `"id"`.
-- `Update` success logs `todolist.TID` (body value) instead of the path id actually used (ties into 1.6).
-- Every handler passes `context.Background()` to `LogAttrs` instead of `r.Context()`, so logs can't be correlated to a request once request-scoped context/trace IDs exist (7.2). Prefer `r.Context()`. Optional, but worth a stub for a service intended to grow.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Observability |
+| **Location** | `controller/todo_controller.go:128`, both controllers |
+| **Issue** | `TodoController.GetById` logs the id under the wrong key (`slog.String("category_id", id)`; should be `"id"`); `Update` success logs `Todolist.TID` (body value) not the path id (ties into 1.6); every handler passes `context.Background()` to `LogAttrs` instead of `r.Context()`. |
+| **Impact** | Misleading attributes and logs that can't be correlated to a request once trace IDs exist (7.2). |
+| **How to reproduce** | `GET /api/v1/todos/{id}` → log line tags the id as `category_id`. |
+| **Suggested fix** | Use the correct key (`"id"`), log the path id in `Update`, and pass `r.Context()` to `LogAttrs`. |
 
 ---
 
 ## 8. Naming, Conventions & Code Quality
 
-### 8.1 [High] [Resolved] JSON tag typo `cayegoryid`
+### 8.1 — JSON tag typo `cayegoryid`
+
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Resolved |
+| **Lens** | Quality |
+| **Location** | `model/model.go:16-23` |
+| **Issue** | The `CategoryID` JSON tag was misspelled (`cayegoryid` → `cayegory_id`). |
+| **Impact** | Serialized field name was wrong, breaking clients. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | The tag is now correctly `json:"category_id"` (progression complete). Current struct below. |
 
 ```16:23:model/model.go
 type Todo struct {
@@ -481,42 +780,87 @@ type Todo struct {
 }
 ```
 
-**Status: Resolved.** The tag is now correctly `json:"category_id"` (the earlier `cayegoryid` → `cayegory_id` → `category_id` progression is complete).
+### 8.2 — Inconsistent method naming: `GetById` vs `GetByID`
 
-### 8.2 [Medium] [Resolved] Inconsistent method naming: `GetById` vs `GetByID`
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Resolved |
+| **Lens** | Quality |
+| **Location** | `model/model.go`, `memorystore/*.go` |
+| **Issue** | The two repositories used different spellings of the lookup method. |
+| **Impact** | Inconsistent API surface across repositories. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Both repositories now use `GetById` consistently. (A future polish pass could adopt the Go-idiomatic `GetByID`, but the inconsistency is gone.) |
 
-**Status: Resolved.** Both `TodoRepository` and `CategoryRepository` (and their implementations and callers) now use `GetById` consistently. Note: they standardized on `GetById` rather than the Go-idiomatic initialism `GetByID`, so a future polish pass could rename to `GetByID` — but the inconsistency this item flagged is gone.
+### 8.3 — Inconsistent JSON tag style
 
-### 8.3 [Medium] [Resolved] Inconsistent JSON tag style
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Resolved |
+| **Lens** | Quality |
+| **Location** | `model/model.go:20-21` |
+| **Issue** | Multi-word JSON tags mixed styles. |
+| **Impact** | Inconsistent wire format. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | Multi-word tags are now consistent snake_case (`creation_date`, `is_done`); single-word tags remain lowercase. |
 
-**Status: Resolved.** Multi-word tags are now consistent snake_case: `creation_date`, `is_done` (`model/model.go:20-21`). Single-word tags remain lowercase, which is consistent with snake_case.
+### 8.4 — Inconsistent receiver/parameter naming
 
-### 8.4 [Medium] [Open] Inconsistent receiver/parameter naming
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Quality |
+| **Location** | `memorystore/in_memory_todo.go:23,45`, both controllers |
+| **Issue** | `CategoryMap.Create` was fixed to a lowercase `category`, but the exported-looking, type-shadowing parameter moved to the Todo side: `TodoMap.Create(Todo model.Todo)` and `TodoMap.Update(tid string, Todo model.Todo)`, plus a capitalized local `var Todolist` in the controllers. |
+| **Impact** | Type shadowing and non-idiomatic names hurt readability. |
+| **How to reproduce** | n/a (style) |
+| **Suggested fix** | Use short, consistent, lowercase parameter/variable names (e.g. `todo`). |
 
-**Status: Open.** `CategoryMap.Create` was fixed to a lowercase `category` parameter, but the exported-looking, type-shadowing parameter just moved to the TODO side: `TodoMap.Create(Todo model.Todo)` and `TodoMap.Update(tid string, Todo model.Todo)` (`in_memory_todo.go:23,45`), plus a capitalized local `var Todolist` in the controllers. Use short, consistent, lowercase parameter/variable names.
+### 8.5 — Type/file naming
 
-### 8.5 [Low] [Resolved] Type/file naming
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Resolved |
+| **Lens** | Quality |
+| **Location** | `controller/`, `memorystore/` |
+| **Issue** | `TODOController` was inconsistent with `TodoMap`/`TodoRepository`; the README referenced a non-existent `memorystore/in_memory.go`. |
+| **Impact** | Confusing naming/docs. |
+| **How to reproduce** | n/a (resolved) |
+| **Suggested fix** | `TODOController` renamed to `TodoController`; README now lists `in_memory_todo.go` and `in_memory_category.go`. |
 
-- **Resolved:** `TODOController` was renamed to `TodoController`, consistent with `TodoMap` / `TodoRepository`.
-- **Resolved:** The README no longer references `memorystore/in_memory.go`; it now correctly lists `in_memory_todo.go` and `in_memory_category.go`.
+### 8.6 — Stray files and comments
 
-### 8.6 [Low] [Open] Stray files and comments
-
-**Status: Open.** The scratch-notes file now lives at `docs/note.txt`, and the misspellings remain: "indepdendent" and "persistance" (×2) in `model/model.go`, and "Reposyiry" in `docs/note.txt`. These should be cleaned up or removed from the repo.
+| Field | Detail |
+| --- | --- |
+| **Severity** | Low |
+| **Status** | Open |
+| **Lens** | Quality |
+| **Location** | `model/model.go`, `docs/note.txt` |
+| **Issue** | A scratch-notes file lives at `docs/note.txt`, and misspellings remain: "indepdendent" and "persistance" (×2) in `model/model.go`, and "Reposyiry" in `docs/note.txt`. |
+| **Impact** | Repo clutter and unprofessional comments. |
+| **How to reproduce** | n/a (cleanup) |
+| **Suggested fix** | Remove the scratch file and fix the misspellings. |
 
 ---
 
 ## 9. Testing
 
-### 9.1 [High] [Open] No tests at all
+### 9.1 — No tests at all
 
-**Status: Open.** There are still no `_test.go` files anywhere in the repo. The store has subtle bugs (1.2, 1.3) that unit tests would have caught immediately.
-
-Recommendation:
-
-- Table-driven unit tests for both stores (create/duplicate, update/missing, delete/missing, get-all empty vs populated).
-- Handler tests using `net/http/httptest` to assert status codes and bodies.
-- A `go vet` + `staticcheck` + `golangci-lint` step in CI.
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | QA / Programmer |
+| **Location** | repo-wide |
+| **Issue** | There are no `_test.go` files anywhere in the repo. |
+| **Impact** | Subtle store bugs (1.2, 1.3) that unit tests would have caught immediately ship undetected. |
+| **How to reproduce** | `go test ./...` → `no test files`. |
+| **Suggested fix** | Table-driven unit tests for both stores; handler tests via `net/http/httptest`; add `go vet` + `staticcheck` + `golangci-lint` to CI. |
 
 ---
 
