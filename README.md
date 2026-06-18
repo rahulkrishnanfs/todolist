@@ -140,11 +140,11 @@ The application follows a ports-and-adapters layout:
   routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
-- Repository interfaces (`TodoRepository`, `CategoryRepository`) are the
-  **ports** defined alongside the domain model.
-- The in-memory store (`TodoMap`, `CategoryMap`) is one **adapter**
-  implementing those ports. Other adapters (e.g. SQL, file) could be added
-  without changing controllers or domain logic.
+- Repository interfaces (`TodoRepository`, `CategoryRepository`,
+  `UserRepository`) are the **ports** defined alongside the domain model.
+- The in-memory stores (`TodoMap`, `CategoryMap`, `UserMap`) are one set of
+  **adapters** implementing those ports. Other adapters (e.g. SQL, file) could
+  be added without changing controllers or domain logic.
 - Domain models (`Todo`, `Category`, `User`) are persistence-independent.
 - An **auth layer** (`auth.Authenticator`) wraps protected routes with
   `AuthorizeRequest`, which verifies the RS256 JWT using the public key;
@@ -285,7 +285,7 @@ Cursor agent.
 
 | Skill | What it does | How to use |
 | --- | --- | --- |
-| `commit-with-issue` | Creates a Conventional Commit linked to a GitHub issue and a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
+| `commit-with-issue` | Creates a Conventional Commit (issue number at the end of the subject) on a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
 | `code-review-update` | Re-scans the source and updates `docs/codereview.md` (finding statuses + new findings) from architect, senior-engineer, hacker, and security perspectives. Writes only that file. | `/code-review-update` |
 | `readme-update` | Re-scans the source and updates this `README.md` (structure, API, C4 diagrams, tooling) to stay accurate for newcomers. Writes only this file. | `/readme-update` |
 
@@ -297,7 +297,8 @@ When invoked, the skill:
 2. Asks for the GitHub issue number (required) and uses it with a `#` prefix.
 3. Picks the right Conventional Commit type (`feat`, `fix`, `docs`, `refactor`, …).
 4. Creates a branch named `feature/#[issue]-[branchname]`.
-5. Commits with a `type(scope): subject` message and a `Closes #[issue]` footer.
+5. Commits with a `type(scope): subject (#[issue])` message — the issue number
+   goes at the end of the subject line.
 
 Commits are authored by **you** (the developer making the change). Configure your
 git identity once so authorship is attributed correctly:
