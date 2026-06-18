@@ -12,6 +12,8 @@ type Config struct {
 		Port              string `toml:"port"`
 		KeystoreFilePath  string `toml:"keystore_file_path"`
 		KeystorePasswword string `toml:"keystore_password"`
+		ServerKey         string `toml:"server_key"`
+		ServerCert        string `toml:"server_cert"`
 	}
 }
 

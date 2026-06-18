@@ -9,12 +9,13 @@ architecture (ports and adapters). Domain models and persistence are decoupled
 through repository interfaces, so the storage backend can be swapped without
 touching business logic.
 
-The project ships with an in-memory store and an HTTP REST API (`net/http`).
-Write/read routes for todos and categories are protected by **RS256 JWT
-authentication**; clients obtain a token via a user signup/login flow. Runtime
-settings (port, keystore) are loaded from `config/properties.toml`, and the JWT
-signing keys are loaded from a PKCS#12 keystore. The listen port defaults to
-`:8080`.
+The project ships with an in-memory store and a REST API (`net/http`) served
+over **HTTPS/TLS**. Write/read routes for todos and categories are protected by
+**RS256 JWT authentication**; clients obtain a token via a user signup/login
+flow. Runtime settings (port, keystore, TLS cert/key) are loaded from
+`config/properties.toml`. The JWT signing keys are loaded from a PKCS#12
+keystore, while the TLS server certificate and key are loaded from PEM files.
+The listen port defaults to `:8080`.
 
 ## Features
 
@@ -26,8 +27,11 @@ signing keys are loaded from a PKCS#12 keystore. The listen port defaults to
   depend on the abstractions, not concrete storage.
 - JWT auth (`auth.Authenticator`): RS256 token generation on login and
   `AuthorizeRequest` middleware on protected routes.
-- PKCS#12 keystore loading (`utils.Secret`) into an RSA key pair.
-- TOML configuration (`utils.Config`) for port and keystore settings.
+- HTTPS/TLS server via `http.Server.ListenAndServeTLS`, using a PEM certificate
+  and key loaded from disk.
+- PKCS#12 keystore loading (`utils.Secret`) into an RSA key pair for JWT signing.
+- TOML configuration (`utils.Config`) for port, keystore, and TLS cert/key
+  settings.
 - Structured JSON logging via `log/slog`, created in `main` and injected into
   the controllers.
 - Sentinel domain errors (`ErrObjectNotFound`, `ErrObjectAlreadyExists`,
@@ -55,14 +59,14 @@ todolist/
 ├── auth/
 │   └── auth.go                 # Authenticator: RS256 JWT + AuthorizeRequest middleware
 ├── utils/
-│   ├── config.go               # Config: loads config/properties.toml
-│   └── secrets.go              # Secret: loads PKCS#12 keystore -> RSA key pair
+│   ├── config.go               # Config: loads config/properties.toml (port, keystore, TLS cert/key)
+│   └── secrets.go              # Secret: loads PKCS#12 keystore -> RSA key pair (JWT signing)
 ├── model/
 │   └── model.go                # Domain entities (Todo, Category, User) + repository ports
 ├── config/
-│   └── properties.toml         # Service config: port, keystore path + password
-├── secrets/                    # RSA keystore / PEM material (keep real secrets out of git)
-├── docs/                       # codereview.md and notes
+│   └── properties.toml         # Service config: port, keystore path + password, TLS cert/key paths
+├── secrets/                    # PKCS#12 keystore (JWT) + PEM TLS cert/key (keep real secrets out of git)
+├── docs/                       # codereview.md, key_generation.txt, and notes
 ├── Dockerfile                  # Multi-stage build -> distroless nonroot image
 ├── .github/workflows/          # SonarCloud analysis CI
 ├── go.mod                      # Module: todolist (Go 1.25)
@@ -71,16 +75,20 @@ todolist/
 
 ## Getting Started
 
-Requirements: **Go 1.25+**. A PKCS#12 keystore and a config file are required at
-startup.
+Requirements: **Go 1.25+**. A PKCS#12 keystore (for JWT signing), a TLS
+certificate/key pair (PEM), and a config file are required at startup. See
+[`docs/key_generation.txt`](docs/key_generation.txt) for the OpenSSL commands
+that generate the keystore and the self-signed PEM cert/key.
 
-1. Ensure `config/properties.toml` points at a valid keystore:
+1. Ensure `config/properties.toml` points at a valid keystore and TLS cert/key:
 
 ```toml
 [service]
 port = ":8080"
 keystore_file_path = "/absolute/path/to/secrets/keystore.p12"
 keystore_password = "changeit"
+server_cert = "/absolute/path/to/secrets/servercert.pem"
+server_key = "/absolute/path/to/secrets/serverkey.pem"
 ```
 
 2. Run from the repository root (config is read from `./config/properties.toml`):
@@ -89,9 +97,10 @@ keystore_password = "changeit"
 go run ./cmd
 ```
 
-This loads the config and keystore, wires up the in-memory stores, controllers,
-auth, and routes, then listens on the configured port (default `:8080`).
-Todo/category endpoints require a JWT — sign up and log in first to get one.
+This loads the config, keystore, and TLS material, wires up the in-memory
+stores, controllers, auth, and routes, then serves HTTPS on the configured port
+(default `:8080`). Todo/category endpoints require a JWT — sign up and log in
+first to get one.
 
 ### API Endpoints
 
@@ -110,33 +119,34 @@ Todo/category endpoints require a JWT — sign up and log in first to get one.
 | PUT | `/api/v1/categories/{id}` | Bearer | Update a category |
 | DELETE | `/api/v1/categories/{id}` | Bearer | Delete a category by id |
 
-Example flow:
+Example flow (the server uses HTTPS; `-k` accepts the self-signed certificate):
 
 ```bash
 # 1. Sign up
-curl -X POST localhost:8080/api/v1/users/signup \
+curl -k -X POST https://localhost:8080/api/v1/users/signup \
   -H 'Content-Type: application/json' \
   -d '{"username":"alice","password":"s3cret","email_address":"alice@example.com"}'
 
 # 2. Log in and capture the token
-TOKEN=$(curl -s -X POST localhost:8080/api/v1/users/login \
+TOKEN=$(curl -sk -X POST https://localhost:8080/api/v1/users/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"alice","password":"s3cret"}' | jq -r .token)
 
 # 3. Call a protected route with the bearer token
-curl -X POST localhost:8080/api/v1/todos \
+curl -k -X POST https://localhost:8080/api/v1/todos \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"tid":"1","activity":"Write docs","description":"Update README","is_done":false,"category_id":"c1","user_id":"alice"}'
 
-curl localhost:8080/api/v1/todos -H "Authorization: Bearer $TOKEN"
+curl -k https://localhost:8080/api/v1/todos -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Architecture Overview
 
 The application follows a ports-and-adapters layout:
 
-- An HTTP layer (`ServeMux` + route files in `cmd/`) maps RESTful `/api/v1/*`
+- An HTTPS layer: `http.Server.ListenAndServeTLS` terminates TLS using the PEM
+  cert/key, and a `ServeMux` (+ route files in `cmd/`) maps RESTful `/api/v1/*`
   routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
@@ -151,15 +161,16 @@ The application follows a ports-and-adapters layout:
   `UserController.Login` mints tokens with the private key.
 - **Config** (`utils.Config`) loads `config/properties.toml`; **secrets**
   (`utils.Secret`) decode a PKCS#12 keystore into the RSA key pair injected into
-  the `Authenticator`.
+  the `Authenticator`. The TLS server certificate and key (PEM) are read
+  directly from the paths in the config by `ListenAndServeTLS`.
 - A `*slog.Logger` (JSON handler writing to stdout) is constructed in
   `cmd/main.go` and injected into the controllers, which emit structured logs
   for each request.
 
 ```text
-HTTP route  ->  JWT middleware  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
-                                          |
-                                          +--> structured logs (slog JSON -> stdout)
+HTTPS (TLS)  ->  route  ->  JWT middleware  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
+                                                      |
+                                                      +--> structured logs (slog JSON -> stdout)
 ```
 
 ## C4 Architecture Diagrams
@@ -174,7 +185,7 @@ flowchart TD
     user["API Client / User<br/>[Person]<br/>Tracks tasks and categories"]
     system["Todo List API<br/>[Software System]<br/>Manages TODO items and categories over HTTP"]
 
-    user -->|"Signs up / logs in for a JWT, then<br/>sends authenticated HTTP/JSON requests"| system
+    user -->|"Signs up / logs in for a JWT, then<br/>sends authenticated HTTPS/JSON requests"| system
 ```
 
 ### Level 2 - Container
@@ -184,20 +195,22 @@ flowchart TD
     user["API Client / User<br/>[Person]"]
 
     subgraph todoApp [Todo List API]
-        api["HTTP API Server<br/>[Container: Go net/http on :8080]<br/>Routes, JWT auth, slog logging"]
+        api["HTTPS API Server<br/>[Container: Go net/http TLS on :8080]<br/>Routes, JWT auth, slog logging"]
         authc["JWT Authenticator<br/>[Component: golang-jwt RS256]<br/>Signs + verifies bearer tokens"]
         store["In-Memory Stores<br/>[Container: Go maps]<br/>TODOs, Categories, Users"]
     end
 
     cfg["Config File<br/>[config/properties.toml]"]
     keys["RSA Keystore<br/>[secrets/keystore.p12 - PKCS#12]"]
+    tls["TLS Cert + Key<br/>[secrets/servercert.pem + serverkey.pem]"]
     logs["Structured Logs<br/>[stdout: JSON via log/slog]"]
 
-    user -->|"HTTP/JSON + Bearer JWT<br/>/api/v1/*"| api
+    user -->|"HTTPS/JSON + Bearer JWT<br/>/api/v1/*"| api
     api -->|"sign / verify tokens"| authc
     api -->|"reads / writes via repository ports"| store
-    api -->|"loads port + keystore path"| cfg
+    api -->|"loads port, keystore + TLS paths"| cfg
     authc -->|"loads RSA key pair"| keys
+    api -->|"loads TLS cert/key (ListenAndServeTLS)"| tls
     api -->|"emits structured JSON logs"| logs
 ```
 
@@ -207,7 +220,8 @@ flowchart TD
 flowchart TD
     user["API Client / User<br/>[Person]"]
 
-    subgraph server [HTTP API Server - cmd package]
+    subgraph server [HTTPS API Server - cmd package]
+        tlssrv["http.Server (TLS)<br/>[Component]<br/>ListenAndServeTLS on :8080"]
         mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/v1/* to handlers"]
         mw["AuthorizeRequest<br/>[Middleware]<br/>Validates JWT on todo/category routes"]
     end
@@ -237,6 +251,7 @@ flowchart TD
     subgraph cfgpkg [Config + Secrets - utils package]
         cfg["Config<br/>[Component]<br/>Loads properties.toml"]
         secret["Secret<br/>[Component]<br/>Loads PKCS#12 -> RSA keys"]
+        tlsfiles["TLS Cert + Key<br/>[PEM files: servercert.pem + serverkey.pem]"]
     end
 
     subgraph domain [Domain - model package]
@@ -248,7 +263,8 @@ flowchart TD
 
     logger["slog.Logger<br/>[Component]<br/>JSON handler writing to stdout"]
 
-    user -->|"HTTP/JSON (+ Bearer JWT)"| mux
+    user -->|"HTTPS/JSON (+ Bearer JWT)"| tlssrv
+    tlssrv -->|"serves"| mux
     mux --> mw
     mw -->|"verify token"| authr
     mw -->|"protected routes"| todoCtrl
@@ -266,6 +282,8 @@ flowchart TD
 
     secret -->|"RSA keys"| authr
     cfg -->|"port + keystore path"| secret
+    cfg -->|"port + TLS cert/key paths"| tlssrv
+    tlsfiles -->|"TLS cert + key"| tlssrv
 
     todoMap -->|"stores"| todoModel
     catMap -->|"stores"| catModel

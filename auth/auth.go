@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"crypto/rsa"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -15,12 +14,14 @@ import (
 type Authenticator struct {
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
+	logger     *slog.Logger
 }
 
-func NewAuthenticator(private *rsa.PrivateKey, public *rsa.PublicKey) *Authenticator {
+func NewAuthenticator(private *rsa.PrivateKey, public *rsa.PublicKey, logger *slog.Logger) *Authenticator {
 	return &Authenticator{
 		PrivateKey: private,
 		PublicKey:  public,
+		logger:     logger,
 	}
 }
 
@@ -59,14 +60,17 @@ func (a *Authenticator) AuthorizeRequest(next http.Handler) http.Handler {
 				return a.PublicKey, nil
 			}, jwtrequest.WithClaims(&ApplicationClaims{}))
 		if err != nil {
-			fmt.Println("ERROR In the token ", err)
+			a.logger.LogAttrs(context.Background(), slog.LevelError,
+				"error in token",
+				slog.String("error", err.Error()))
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 
 		}
 		if token.Valid {
 			ctx := context.WithValue(r.Context(), "user", token.Claims.(*ApplicationClaims).Username)
-			slog.Info("TOKEN IS VALID")
+			a.logger.LogAttrs(context.Background(), slog.LevelInfo,
+				"token received is valid")
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 	})
