@@ -1,6 +1,6 @@
 ---
 name: commit-with-issue
-description: Create an industry-standard Conventional Commit tied to a GitHub issue and a matching feature branch. Use when the user wants to commit changes, asks for help writing a commit message, or invokes this skill. Always prompts for the GitHub issue number, reuses the issue's existing branch or creates one named feature/#[issue]-[branchname], and writes a typed commit (feat, fix, docs, etc.) that references the issue with a # prefix.
+description: Create an industry-standard Conventional Commit tied to a GitHub issue and a matching feature branch. Use when the user wants to commit changes, asks for help writing a commit message, or invokes this skill. Always prompts for the GitHub issue number, reuses the issue's existing branch or creates one named feature/#[issue]-[branchname], and writes a typed commit (feat, fix, docs, etc.) whose subject ends with the issue number in parentheses (e.g. (#42)).
 disable-model-invocation: true
 ---
 
@@ -31,7 +31,7 @@ The commit MUST reference a GitHub issue. If the user did not provide one, ask:
 
 > "What is the GitHub issue number this commit relates to?"
 
-Do not proceed past this step without a number. Accept either `42` or `#42`. Always write the issue with a leading `#` in both the branch name and the commit message (e.g. `#42`).
+Do not proceed past this step without a number. Accept either `42` or `#42`. Always write the issue with a leading `#` in both the branch name and at the end of the commit subject (e.g. `#42`).
 
 ### Step 3 — Choose the commit type
 
@@ -73,22 +73,20 @@ git branch --list "feature/#[issue]-*"
 
 ### Step 5 — Stage and commit
 
-Stage the relevant files (`git add <paths>`), then commit using a HEREDOC so the body and footer are formatted correctly:
+Stage the relevant files (`git add <paths>`), then commit using a HEREDOC so the body is formatted correctly:
 
 ```bash
 git commit -m "$(cat <<'EOF'
-type(scope): short imperative subject
+type(scope): short imperative subject (#42)
 
 Optional body explaining the WHY of the change, wrapped at ~72 chars.
-
-Closes #42
 EOF
 )"
 ```
 
 Commit message rules:
-- Subject ≤ ~72 chars, imperative mood ("add", not "added"/"adds"), no trailing period.
-- Reference the issue in the footer: `Closes #42` (use `Refs #42` if the issue should stay open).
+- Append the issue number at the end of the subject line in parentheses: `(#42)`.
+- Subject ≤ ~72 chars including the trailing `(#42)`, imperative mood ("add", not "added"/"adds"), no trailing period after the issue reference.
 - Keep the subject focused on a single logical change.
 
 ### Step 6 — Verify
@@ -102,12 +100,10 @@ Run `git status` and `git log -1` to confirm the branch and commit landed as int
 Branch: `feature/#42-add-jwt-authentication`
 
 ```
-feat(auth): add JWT-based login endpoint
+feat(auth): add JWT-based login endpoint (#42)
 
 Add a /login route that issues signed JWTs and middleware that
 validates them on protected routes.
-
-Closes #42
 ```
 
 **Example 2** — bug fix, issue 17
@@ -115,12 +111,10 @@ Closes #42
 Branch: `feature/#17-fix-empty-store-500`
 
 ```
-fix(store): return empty list instead of error when store is empty
+fix(store): return empty list when store is empty (#17)
 
 GetAll returned an error for an empty store, which surfaced as a 500.
 Return an empty slice so the API responds 200 with [].
-
-Closes #17
 ```
 
 **Example 3** — docs only, issue 23
@@ -128,9 +122,7 @@ Closes #17
 Branch: `feature/#23-update-readme-endpoints`
 
 ```
-docs(readme): correct REST endpoints and verbs
-
-Closes #23
+docs(readme): correct REST endpoints and verbs (#23)
 ```
 
 ## Guardrails
