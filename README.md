@@ -9,16 +9,25 @@ architecture (ports and adapters). Domain models and persistence are decoupled
 through repository interfaces, so the storage backend can be swapped without
 touching business logic.
 
-Currently the project ships with an in-memory store and an HTTP REST API
-(`net/http`) served from `cmd/main.go` on port `:8080`.
+The project ships with an in-memory store and an HTTP REST API (`net/http`).
+Write/read routes for todos and categories are protected by **RS256 JWT
+authentication**; clients obtain a token via a user signup/login flow. Runtime
+settings (port, keystore) are loaded from `config/properties.toml`, and the JWT
+signing keys are loaded from a PKCS#12 keystore. The listen port defaults to
+`:8080`.
 
 ## Features
 
-- Domain models for `Todo` items and `Category` groupings.
-- Repository interfaces (`TodoRepository`, `CategoryRepository`) acting as ports.
-- In-memory adapter implementation (`TodoMap`, `CategoryMap`).
-- Controllers (`TodoController`, `CategoryController`) that depend on the
-  abstractions, not concrete storage.
+- Domain models for `Todo`, `Category`, and `User`.
+- Repository interfaces (`TodoRepository`, `CategoryRepository`,
+  `UserRepository`) acting as ports.
+- In-memory adapters (`TodoMap`, `CategoryMap`, `UserMap`).
+- Controllers (`TodoController`, `CategoryController`, `UserController`) that
+  depend on the abstractions, not concrete storage.
+- JWT auth (`auth.Authenticator`): RS256 token generation on login and
+  `AuthorizeRequest` middleware on protected routes.
+- PKCS#12 keystore loading (`utils.Secret`) into an RSA key pair.
+- TOML configuration (`utils.Config`) for port and keystore settings.
 - Structured JSON logging via `log/slog`, created in `main` and injected into
   the controllers.
 - Sentinel domain errors (`ErrObjectNotFound`, `ErrObjectAlreadyExists`,
@@ -31,56 +40,96 @@ Currently the project ships with an in-memory store and an HTTP REST API
 ```text
 todolist/
 ├── cmd/
-│   ├── main.go                 # Entrypoint: wires stores, controllers, routes; starts HTTP server
-│   ├── routes.go               # ToDoRoutes: registers /api/v1/todos handlers
-│   └── category_routes.go      # CategoryRoutes: registers /api/v1/categories handlers
+│   ├── main.go                 # Entrypoint: loads config + keystore, wires stores/controllers/auth/routes, starts server
+│   ├── todo_routes.go          # ToDoRoutes: /api/v1/todos handlers (JWT-protected)
+│   ├── category_routes.go      # CategoryRoutes: /api/v1/categories handlers (JWT-protected)
+│   └── user_routes.go          # UserRoutes: /api/v1/users signup + login (public)
 ├── controller/
 │   ├── todo_controller.go      # TodoController (depends on TodoRepository)
-│   └── category_controller.go  # CategoryController (depends on CategoryRepository)
+│   ├── category_controller.go  # CategoryController (depends on CategoryRepository)
+│   └── user_controller.go      # UserController: signup + login, issues JWT
 ├── memorystore/
 │   ├── in_memory_todo.go       # In-memory adapter: TodoMap
-│   └── in_memory_category.go   # In-memory adapter: CategoryMap
+│   ├── in_memory_category.go   # In-memory adapter: CategoryMap
+│   └── in_memory_user.go       # In-memory adapter: UserMap
+├── auth/
+│   └── auth.go                 # Authenticator: RS256 JWT + AuthorizeRequest middleware
+├── utils/
+│   ├── config.go               # Config: loads config/properties.toml
+│   └── secrets.go              # Secret: loads PKCS#12 keystore -> RSA key pair
 ├── model/
-│   └── model.go                # Domain entities + repository interfaces (ports)
-├── go.mod                      # Module: todolist (Go 1.22)
+│   └── model.go                # Domain entities (Todo, Category, User) + repository ports
+├── config/
+│   └── properties.toml         # Service config: port, keystore path + password
+├── secrets/                    # RSA keystore / PEM material (keep real secrets out of git)
+├── docs/                       # codereview.md and notes
+├── Dockerfile                  # Multi-stage build -> distroless nonroot image
+├── .github/workflows/          # SonarCloud analysis CI
+├── go.mod                      # Module: todolist (Go 1.25)
 └── README.md
 ```
 
 ## Getting Started
 
-Requirements: Go 1.22+.
+Requirements: **Go 1.25+**. A PKCS#12 keystore and a config file are required at
+startup.
+
+1. Ensure `config/properties.toml` points at a valid keystore:
+
+```toml
+[service]
+port = ":8080"
+keystore_file_path = "/absolute/path/to/secrets/keystore.p12"
+keystore_password = "changeit"
+```
+
+2. Run from the repository root (config is read from `./config/properties.toml`):
 
 ```bash
-# From the repository root
 go run ./cmd
 ```
 
-This starts the HTTP server in `cmd/main.go`, which wires up the in-memory
-stores, controllers, and routes, then listens on `:8080`.
+This loads the config and keystore, wires up the in-memory stores, controllers,
+auth, and routes, then listens on the configured port (default `:8080`).
+Todo/category endpoints require a JWT — sign up and log in first to get one.
 
 ### API Endpoints
 
-| Method | Path | Description |
-| --- | --- | --- |
-| POST | `/api/v1/todos` | Create a TODO |
-| GET | `/api/v1/todos` | List all TODOs |
-| GET | `/api/v1/todos/{id}` | Get a TODO by id |
-| PUT | `/api/v1/todos/{id}` | Update a TODO |
-| DELETE | `/api/v1/todos/{id}` | Delete a TODO by id |
-| POST | `/api/v1/categories` | Create a category |
-| GET | `/api/v1/categories` | List all categories |
-| GET | `/api/v1/categories/{id}` | Get a category by id |
-| PUT | `/api/v1/categories/{id}` | Update a category |
-| DELETE | `/api/v1/categories/{id}` | Delete a category by id |
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/api/v1/users/signup` | None | Register a user |
+| POST | `/api/v1/users/login` | None | Authenticate; returns a JWT |
+| POST | `/api/v1/todos` | Bearer | Create a TODO |
+| GET | `/api/v1/todos` | Bearer | List all TODOs |
+| GET | `/api/v1/todos/{id}` | Bearer | Get a TODO by id |
+| PUT | `/api/v1/todos/{id}` | Bearer | Update a TODO |
+| DELETE | `/api/v1/todos/{id}` | Bearer | Delete a TODO by id |
+| POST | `/api/v1/categories` | Bearer | Create a category |
+| GET | `/api/v1/categories` | Bearer | List all categories |
+| GET | `/api/v1/categories/{id}` | Bearer | Get a category by id |
+| PUT | `/api/v1/categories/{id}` | Bearer | Update a category |
+| DELETE | `/api/v1/categories/{id}` | Bearer | Delete a category by id |
 
-Example:
+Example flow:
 
 ```bash
-curl -X POST localhost:8080/api/v1/todos \
+# 1. Sign up
+curl -X POST localhost:8080/api/v1/users/signup \
   -H 'Content-Type: application/json' \
-  -d '{"tid":"1","activity":"Write docs","description":"Update README","is_done":false}'
+  -d '{"username":"alice","password":"s3cret","email_address":"alice@example.com"}'
 
-curl localhost:8080/api/v1/todos
+# 2. Log in and capture the token
+TOKEN=$(curl -s -X POST localhost:8080/api/v1/users/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"s3cret"}' | jq -r .token)
+
+# 3. Call a protected route with the bearer token
+curl -X POST localhost:8080/api/v1/todos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"tid":"1","activity":"Write docs","description":"Update README","is_done":false,"category_id":"c1","user_id":"alice"}'
+
+curl localhost:8080/api/v1/todos -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Architecture Overview
@@ -91,20 +140,26 @@ The application follows a ports-and-adapters layout:
   routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
-- Repository interfaces (`TodoRepository`, `CategoryRepository`) are the
-  **ports** defined alongside the domain model.
-- The in-memory store (`TodoMap`, `CategoryMap`) is one **adapter**
-  implementing those ports. Other adapters (e.g. SQL, file) could be added
-  without changing controllers or domain logic.
-- Domain models (`Todo`, `Category`) are persistence-independent.
+- Repository interfaces (`TodoRepository`, `CategoryRepository`,
+  `UserRepository`) are the **ports** defined alongside the domain model.
+- The in-memory stores (`TodoMap`, `CategoryMap`, `UserMap`) are one set of
+  **adapters** implementing those ports. Other adapters (e.g. SQL, file) could
+  be added without changing controllers or domain logic.
+- Domain models (`Todo`, `Category`, `User`) are persistence-independent.
+- An **auth layer** (`auth.Authenticator`) wraps protected routes with
+  `AuthorizeRequest`, which verifies the RS256 JWT using the public key;
+  `UserController.Login` mints tokens with the private key.
+- **Config** (`utils.Config`) loads `config/properties.toml`; **secrets**
+  (`utils.Secret`) decode a PKCS#12 keystore into the RSA key pair injected into
+  the `Authenticator`.
 - A `*slog.Logger` (JSON handler writing to stdout) is constructed in
-  `cmd/main.go` and injected into both controllers, which emit structured logs
+  `cmd/main.go` and injected into the controllers, which emit structured logs
   for each request.
 
 ```text
-HTTP route  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
-                      |
-                      +--> structured logs (slog JSON -> stdout)
+HTTP route  ->  JWT middleware  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
+                                          |
+                                          +--> structured logs (slog JSON -> stdout)
 ```
 
 ## C4 Architecture Diagrams
@@ -119,7 +174,7 @@ flowchart TD
     user["API Client / User<br/>[Person]<br/>Tracks tasks and categories"]
     system["Todo List API<br/>[Software System]<br/>Manages TODO items and categories over HTTP"]
 
-    user -->|"Sends HTTP/JSON requests<br/>(create / update / delete / read)"| system
+    user -->|"Signs up / logs in for a JWT, then<br/>sends authenticated HTTP/JSON requests"| system
 ```
 
 ### Level 2 - Container
@@ -129,15 +184,21 @@ flowchart TD
     user["API Client / User<br/>[Person]"]
 
     subgraph todoApp [Todo List API]
-        api["HTTP API Server<br/>[Container: Go net/http on :8080]<br/>Routes requests to controllers, logs via slog"]
-        store["In-Memory Store<br/>[Container: Go maps]<br/>Holds TODOs and Categories in memory"]
+        api["HTTP API Server<br/>[Container: Go net/http on :8080]<br/>Routes, JWT auth, slog logging"]
+        authc["JWT Authenticator<br/>[Component: golang-jwt RS256]<br/>Signs + verifies bearer tokens"]
+        store["In-Memory Stores<br/>[Container: Go maps]<br/>TODOs, Categories, Users"]
     end
 
+    cfg["Config File<br/>[config/properties.toml]"]
+    keys["RSA Keystore<br/>[secrets/keystore.p12 - PKCS#12]"]
     logs["Structured Logs<br/>[stdout: JSON via log/slog]"]
 
-    user -->|"HTTP/JSON over :8080<br/>/api/v1/todos, /api/v1/categories"| api
-    api -->|"Reads / writes via repository ports"| store
-    api -->|"Emits structured JSON logs"| logs
+    user -->|"HTTP/JSON + Bearer JWT<br/>/api/v1/*"| api
+    api -->|"sign / verify tokens"| authc
+    api -->|"reads / writes via repository ports"| store
+    api -->|"loads port + keystore path"| cfg
+    authc -->|"loads RSA key pair"| keys
+    api -->|"emits structured JSON logs"| logs
 ```
 
 ### Level 3 - Component
@@ -147,52 +208,73 @@ flowchart TD
     user["API Client / User<br/>[Person]"]
 
     subgraph server [HTTP API Server - cmd package]
-        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/v1/* routes to handlers"]
+        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/v1/* to handlers"]
+        mw["AuthorizeRequest<br/>[Middleware]<br/>Validates JWT on todo/category routes"]
+    end
+
+    subgraph authpkg [Auth - auth package]
+        authr["Authenticator<br/>[Component]<br/>GenerateJWT (RS256) + AuthorizeRequest"]
     end
 
     subgraph handlers [Controllers - controller package]
-        todoCtrl["TodoController<br/>[Component]<br/>HTTP handlers for Todo use cases"]
-        catCtrl["CategoryController<br/>[Component]<br/>HTTP handlers for Category use cases"]
+        todoCtrl["TodoController<br/>[Component]"]
+        catCtrl["CategoryController<br/>[Component]"]
+        userCtrl["UserController<br/>[Component]<br/>signup + login -> JWT"]
     end
 
     subgraph ports [Ports - model package]
-        todoRepo["TodoRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
-        catRepo["CategoryRepository<br/>[Interface]<br/>Create / Update / Delete / GetById / GetAll"]
+        todoRepo["TodoRepository<br/>[Interface]"]
+        catRepo["CategoryRepository<br/>[Interface]"]
+        userRepo["UserRepository<br/>[Interface]<br/>Create / Login"]
     end
 
     subgraph adapters [Adapters - memorystore package]
-        todoMap["TodoMap<br/>[Component]<br/>In-memory TODO store"]
-        catMap["CategoryMap<br/>[Component]<br/>In-memory Category store"]
+        todoMap["TodoMap<br/>[Component]"]
+        catMap["CategoryMap<br/>[Component]"]
+        userMap["UserMap<br/>[Component]"]
+    end
+
+    subgraph cfgpkg [Config + Secrets - utils package]
+        cfg["Config<br/>[Component]<br/>Loads properties.toml"]
+        secret["Secret<br/>[Component]<br/>Loads PKCS#12 -> RSA keys"]
     end
 
     subgraph domain [Domain - model package]
         todoModel["Todo<br/>[Entity]"]
         catModel["Category<br/>[Entity]"]
+        userModel["User<br/>[Entity]"]
         errs["Sentinel errors<br/>[ErrObjectNotFound, ErrObjectAlreadyExists, ErrStoreEmpty]"]
     end
 
-    subgraph obs [Observability]
-        logger["slog.Logger<br/>[Component]<br/>JSON handler writing to stdout"]
-    end
+    logger["slog.Logger<br/>[Component]<br/>JSON handler writing to stdout"]
 
-    user -->|"HTTP/JSON"| mux
-    mux -->|"routes to"| todoCtrl
-    mux -->|"routes to"| catCtrl
+    user -->|"HTTP/JSON (+ Bearer JWT)"| mux
+    mux --> mw
+    mw -->|"verify token"| authr
+    mw -->|"protected routes"| todoCtrl
+    mw -->|"protected routes"| catCtrl
+    mux -->|"public routes"| userCtrl
 
+    userCtrl -->|"GenerateJWT"| authr
     todoCtrl -->|"depends on"| todoRepo
     catCtrl -->|"depends on"| catRepo
-
-    todoCtrl -->|"logs via"| logger
-    catCtrl -->|"logs via"| logger
+    userCtrl -->|"depends on"| userRepo
 
     todoMap -.->|"implements"| todoRepo
     catMap -.->|"implements"| catRepo
+    userMap -.->|"implements"| userRepo
 
-    todoMap -->|"returns"| errs
-    catMap -->|"returns"| errs
+    secret -->|"RSA keys"| authr
+    cfg -->|"port + keystore path"| secret
 
     todoMap -->|"stores"| todoModel
     catMap -->|"stores"| catModel
+    userMap -->|"stores"| userModel
+    todoMap -->|"returns"| errs
+
+    todoCtrl -->|"logs via"| logger
+    catCtrl -->|"logs via"| logger
+    userCtrl -->|"logs via"| logger
 ```
 
 ## Developer Tooling (Cursor Skills)
@@ -203,7 +285,7 @@ Cursor agent.
 
 | Skill | What it does | How to use |
 | --- | --- | --- |
-| `commit-with-issue` | Creates a Conventional Commit linked to a GitHub issue and a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
+| `commit-with-issue` | Creates a Conventional Commit (issue number at the end of the subject) on a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
 | `code-review-update` | Re-scans the source and updates `docs/codereview.md` (finding statuses + new findings) from architect, senior-engineer, hacker, and security perspectives. Writes only that file. | `/code-review-update` |
 | `readme-update` | Re-scans the source and updates this `README.md` (structure, API, C4 diagrams, tooling) to stay accurate for newcomers. Writes only this file. | `/readme-update` |
 
@@ -215,7 +297,8 @@ When invoked, the skill:
 2. Asks for the GitHub issue number (required) and uses it with a `#` prefix.
 3. Picks the right Conventional Commit type (`feat`, `fix`, `docs`, `refactor`, …).
 4. Creates a branch named `feature/#[issue]-[branchname]`.
-5. Commits with a `type(scope): subject` message and a `Closes #[issue]` footer.
+5. Commits with a `type(scope): subject (#[issue])` message — the issue number
+   goes at the end of the subject line.
 
 Commits are authored by **you** (the developer making the change). Configure your
 git identity once so authorship is attributed correctly:
@@ -245,8 +328,14 @@ source, and keeps this Developer Tooling table in sync. It only ever writes
 
 ## Roadmap / Future Work
 
+- Hash passwords (currently stored/compared in plaintext) with bcrypt.
+- Per-user authorization / data ownership (scope todos and categories to the
+  authenticated user).
+- Move secrets out of the repo; load keystore path/password from environment or
+  a secret manager.
+- Align Docker/CI Go version (1.22) with `go.mod` (1.25).
 - Persistent storage adapter (SQL or file-based) implementing the existing
   repository ports.
-- Input validation and consistent JSON error responses.
-- Authentication / authorization for the API.
-- Tests for adapters and controllers.
+- Input validation and consistent JSON error responses (map errors to
+  400/404/409).
+- Tests for adapters, controllers, and the auth flow.

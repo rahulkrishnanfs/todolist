@@ -1,0 +1,5 @@
+[service]
+
+port = ":8080"
+keystore_file_path = "/Users/rahulra/claude/todolist/secrets/keystore.p12"
+keystore_password = "changeit"

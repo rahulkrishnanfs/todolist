@@ -13,22 +13,33 @@ var (
 
 // Database indepdendent (Domain model)
 // Users can track the individual Items
-type Todo struct {
-	TID          string    `json:"tid"`
-	Activity     string    `json:"activity"`
-	Description  string    `json:"description"`
-	CreationDate time.Time `json:"creation_date"`
-	IsDone       bool      `json:"is_done"`
-	CategoryID   string    `json:"category_id"`
-}
+type (
+	Todo struct {
+		TID          string    `json:"tid"`
+		Activity     string    `json:"activity"`
+		Description  string    `json:"description"`
+		CreationDate time.Time `json:"creation_date"`
+		IsDone       bool      `json:"is_done"`
+		CategoryID   string    `json:"category_id"`
+		UserID       string    `json:"user_id"`
+	}
 
-// Entity
-// Groups TODO together
-type Category struct {
-	CID         string `json:"cid"`
-	Description string `json:"description"`
-	Name        string `json:"name"`
-}
+	// Entity
+	// Groups TODO together
+	Category struct {
+		CID         string `json:"cid"`
+		Description string `json:"description"`
+		Name        string `json:"name"`
+		UID         string `json:"uid"`
+	}
+
+	User struct {
+		UID          string `json:"uid"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		EmailAddress string `json:"email_address"`
+	}
+)
 
 // interface Abstraction
 // Abstracts persistance for TODO Items
@@ -48,4 +59,9 @@ type CategoryRepository interface {
 	Delete(string) error
 	GetById(string) (Category, error)
 	GetAll() ([]Category, error)
+}
+
+type UserRepository interface {
+	Create(User) error
+	Login(string, string) (bool, error)
 }
