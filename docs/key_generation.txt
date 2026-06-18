@@ -6,3 +6,8 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -node
 
 2) Create p12 keystore out of it
 openssl pkcs12 -export -out keystore.p12 -inkey key.pem -in cert.pem
+
+
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+Reference: https://trenchesdeveloper.medium.com/how-to-add-https-and-http-2-to-your-go-server-b7dc7834b0a1
