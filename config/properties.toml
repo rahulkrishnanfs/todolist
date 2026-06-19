@@ -1,7 +1,6 @@
 [service]
-
 port = ":8080"
-keystore_file_path = "/Users/rahulra/claude/todolist/secrets/keystore.p12"
+keystore_file_path = "/etc/todolist/secrets/keystore.p12"
 keystore_password  = "changeit"
-server_cert        = "/Users/rahulra/claude/todolist/secrets/servercert.pem" 
-server_key         = "/Users/rahulra/claude/todolist/secrets/serverkey.pem"
+server_cert        = "/etc/todolist/secrets/servercert.pem"
+server_key         = "/etc/todolist/secrets/serverkey.pem"

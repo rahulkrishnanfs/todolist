@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"os"
 
-	"todolist/auth"
-	"todolist/controller"
-	"todolist/memorystore"
-	"todolist/utils"
+	"todolist/pkg/auth"
+	"todolist/pkg/controller"
+	"todolist/pkg/memorystore"
+	"todolist/pkg/router"
+	"todolist/pkg/utils"
 )
 
 func main() {
@@ -37,9 +38,9 @@ func main() {
 	todoController := controller.NewTodoController(todoStore, logger)
 	userController := controller.NewUserController(userStore, logger, auth)
 
-	CategoryRoutes(*categoryController, mux, logger, auth)
-	ToDoRoutes(*todoController, mux, logger, auth)
-	UserRoutes(*userController, mux, logger)
+	router.SetCategoryRoutes(*categoryController, mux, logger, auth)
+	router.SetTodoRoutes(*todoController, mux, logger, auth)
+	router.SetUserRoutes(*userController, mux, logger)
 
 	server := &http.Server{
 		Addr:    config.Service.Port,

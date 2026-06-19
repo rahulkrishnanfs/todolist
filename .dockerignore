@@ -4,3 +4,9 @@
 Note.txt
 Dockerfile
 .dockerignore
+
+secrets/
+.env
+.env.*
+!.env.example
+config/properties.toml.dev

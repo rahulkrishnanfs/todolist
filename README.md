@@ -35,7 +35,9 @@ The listen port defaults to `:8080`.
 - Structured JSON logging via `log/slog`, created in `main` and injected into
   the controllers.
 - Sentinel domain errors (`ErrObjectNotFound`, `ErrObjectAlreadyExists`,
-  `ErrStoreEmpty`) returned by the stores.
+  `ErrStoreEmpty`) defined in the model; the stores return `ErrObjectNotFound` /
+  `ErrObjectAlreadyExists`, and `GetAll` returns an empty list (not an error)
+  when the store is empty.
 - Meaningful HTTP status codes for writes (`201 Created` on create,
   `204 No Content` on update/delete).
 
@@ -44,40 +46,48 @@ The listen port defaults to `:8080`.
 ```text
 todolist/
 ├── cmd/
-│   ├── main.go                 # Entrypoint: loads config + keystore, wires stores/controllers/auth/routes, starts server
-│   ├── todo_routes.go          # ToDoRoutes: /api/v1/todos handlers (JWT-protected)
-│   ├── category_routes.go      # CategoryRoutes: /api/v1/categories handlers (JWT-protected)
-│   └── user_routes.go          # UserRoutes: /api/v1/users signup + login (public)
-├── controller/
-│   ├── todo_controller.go      # TodoController (depends on TodoRepository)
-│   ├── category_controller.go  # CategoryController (depends on CategoryRepository)
-│   └── user_controller.go      # UserController: signup + login, issues JWT
-├── memorystore/
-│   ├── in_memory_todo.go       # In-memory adapter: TodoMap
-│   ├── in_memory_category.go   # In-memory adapter: CategoryMap
-│   └── in_memory_user.go       # In-memory adapter: UserMap
-├── auth/
-│   └── auth.go                 # Authenticator: RS256 JWT + AuthorizeRequest middleware
-├── utils/
-│   ├── config.go               # Config: loads config/properties.toml (port, keystore, TLS cert/key)
-│   └── secrets.go              # Secret: loads PKCS#12 keystore -> RSA key pair (JWT signing)
-├── model/
-│   └── model.go                # Domain entities (Todo, Category, User) + repository ports
+│   └── main.go                     # Entrypoint: loads config + keystore, wires stores/controllers/auth/routes, starts TLS server
+├── pkg/
+│   ├── controller/
+│   │   ├── todo_controller.go      # TodoController (depends on TodoRepository)
+│   │   ├── category_controller.go  # CategoryController (depends on CategoryRepository)
+│   │   └── user_controller.go      # UserController: signup + login, issues JWT
+│   ├── router/
+│   │   ├── todo_routes.go          # SetTodoRoutes: /api/v1/todos handlers (JWT-protected)
+│   │   ├── category_routes.go      # SetCategoryRoutes: /api/v1/categories handlers (JWT-protected)
+│   │   └── user_routes.go          # SetUserRoutes: /api/v1/users signup + login (public)
+│   ├── memorystore/
+│   │   ├── in_memory_todo.go       # In-memory adapter: TodoMap
+│   │   ├── in_memory_category.go   # In-memory adapter: CategoryMap
+│   │   └── in_memory_user.go       # In-memory adapter: UserMap
+│   ├── auth/
+│   │   └── auth.go                 # Authenticator: RS256 JWT + AuthorizeRequest middleware
+│   ├── utils/
+│   │   ├── config.go               # Config: loads config/properties.toml (port, keystore, TLS cert/key)
+│   │   └── secrets.go              # Secret: loads PKCS#12 keystore -> RSA key pair (JWT signing)
+│   └── model/
+│       └── model.go                # Domain entities (Todo, Category, User) + repository ports
 ├── config/
-│   └── properties.toml         # Service config: port, keystore path + password, TLS cert/key paths
-├── secrets/                    # PKCS#12 keystore (JWT) + PEM TLS cert/key (keep real secrets out of git)
-├── docs/                       # codereview.md, key_generation.txt, and notes
-├── Dockerfile                  # Multi-stage build -> distroless nonroot image
-├── .github/workflows/          # SonarCloud analysis CI
-├── go.mod                      # Module: todolist (Go 1.25)
+│   ├── properties.toml             # Service config: port, keystore path + password, TLS cert/key paths
+│   └── properties.toml.dev         # Local-dev config (absolute paths) — ignored by git/docker
+├── charts/todolist/                # Helm chart: Deployment, Service, ConfigMap, Secret, Ingress
+├── scripts/                        # docker-run.sh, k8s-secrets.sh helpers
+├── secrets/                        # PKCS#12 keystore (JWT) + PEM TLS cert/key (keep real secrets out of git)
+├── docs/                           # codereview.md, status-code/key-gen/k8s notes
+├── magfile.go                      # Mage targets: build, docker login/build/push
+├── Dockerfile                      # Multi-stage build -> distroless nonroot image
+├── .github/workflows/              # SonarCloud analysis CI
+├── go.mod                          # Module: todolist (Go 1.25)
 └── README.md
 ```
+
+All application packages live under `pkg/` (imported as `todolist/pkg/...`); `cmd/main.go` is the only `package main` and just wires everything together.
 
 ## Getting Started
 
 Requirements: **Go 1.25+**. A PKCS#12 keystore (for JWT signing), a TLS
 certificate/key pair (PEM), and a config file are required at startup. See
-[`docs/key_generation.txt`](docs/key_generation.txt) for the OpenSSL commands
+[`docs/2_key_generation.md`](docs/2_key_generation.md) for the OpenSSL commands
 that generate the keystore and the self-signed PEM cert/key.
 
 1. Ensure `config/properties.toml` points at a valid keystore and TLS cert/key:
@@ -146,8 +156,8 @@ curl -k https://localhost:8080/api/v1/todos -H "Authorization: Bearer $TOKEN"
 The application follows a ports-and-adapters layout:
 
 - An HTTPS layer: `http.Server.ListenAndServeTLS` terminates TLS using the PEM
-  cert/key, and a `ServeMux` (+ route files in `cmd/`) maps RESTful `/api/v1/*`
-  routes to controller methods.
+  cert/key, and a `ServeMux` (wired by the `pkg/router` package) maps RESTful
+  `/api/v1/*` routes to controller methods.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
 - Repository interfaces (`TodoRepository`, `CategoryRepository`,
@@ -220,41 +230,41 @@ flowchart TD
 flowchart TD
     user["API Client / User<br/>[Person]"]
 
-    subgraph server [HTTPS API Server - cmd package]
-        tlssrv["http.Server (TLS)<br/>[Component]<br/>ListenAndServeTLS on :8080"]
-        mux["ServeMux + Routes<br/>[Component]<br/>Maps /api/v1/* to handlers"]
-        mw["AuthorizeRequest<br/>[Middleware]<br/>Validates JWT on todo/category routes"]
+    subgraph server [HTTPS API Server - cmd + router packages]
+        tlssrv["http.Server (TLS)<br/>[Component: cmd]<br/>ListenAndServeTLS on :8080"]
+        mux["ServeMux + Set*Routes<br/>[Component: pkg/router]<br/>Maps /api/v1/* to handlers"]
+        mw["AuthorizeRequest<br/>[Middleware: pkg/auth]<br/>Validates JWT on todo/category routes"]
     end
 
-    subgraph authpkg [Auth - auth package]
+    subgraph authpkg [Auth - pkg/auth package]
         authr["Authenticator<br/>[Component]<br/>GenerateJWT (RS256) + AuthorizeRequest"]
     end
 
-    subgraph handlers [Controllers - controller package]
+    subgraph handlers [Controllers - pkg/controller package]
         todoCtrl["TodoController<br/>[Component]"]
         catCtrl["CategoryController<br/>[Component]"]
         userCtrl["UserController<br/>[Component]<br/>signup + login -> JWT"]
     end
 
-    subgraph ports [Ports - model package]
+    subgraph ports [Ports - pkg/model package]
         todoRepo["TodoRepository<br/>[Interface]"]
         catRepo["CategoryRepository<br/>[Interface]"]
         userRepo["UserRepository<br/>[Interface]<br/>Create / Login"]
     end
 
-    subgraph adapters [Adapters - memorystore package]
+    subgraph adapters [Adapters - pkg/memorystore package]
         todoMap["TodoMap<br/>[Component]"]
         catMap["CategoryMap<br/>[Component]"]
         userMap["UserMap<br/>[Component]"]
     end
 
-    subgraph cfgpkg [Config + Secrets - utils package]
+    subgraph cfgpkg [Config + Secrets - pkg/utils package]
         cfg["Config<br/>[Component]<br/>Loads properties.toml"]
         secret["Secret<br/>[Component]<br/>Loads PKCS#12 -> RSA keys"]
         tlsfiles["TLS Cert + Key<br/>[PEM files: servercert.pem + serverkey.pem]"]
     end
 
-    subgraph domain [Domain - model package]
+    subgraph domain [Domain - pkg/model package]
         todoModel["Todo<br/>[Entity]"]
         catModel["Category<br/>[Entity]"]
         userModel["User<br/>[Entity]"]
@@ -351,7 +361,8 @@ source, and keeps this Developer Tooling table in sync. It only ever writes
   authenticated user).
 - Move secrets out of the repo; load keystore path/password from environment or
   a secret manager.
-- Align Docker/CI Go version (1.22) with `go.mod` (1.25).
+- Align the CI Go version (`.github/workflows/sonarcloud.yml` pins 1.22) with
+  `go.mod` (1.25); the Dockerfile build stage already uses `golang:1.25`.
 - Persistent storage adapter (SQL or file-based) implementing the existing
   repository ports.
 - Input validation and consistent JSON error responses (map errors to
