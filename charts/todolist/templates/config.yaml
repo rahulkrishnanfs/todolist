@@ -1,0 +1,12 @@
+apiVersion: v1
+data:
+  properties.toml: |-
+    [service]
+    port = ":8080"
+    keystore_file_path = "/etc/todolist/secrets/keystore.p12"
+    keystore_password  = "changeit"
+    server_cert        = "/etc/todolist/secrets/servercert.pem"
+    server_key         = "/etc/todolist/secrets/serverkey.pem"
+kind: ConfigMap
+metadata:
+  name: {{ include "todolist.fullname" . }}

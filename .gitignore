@@ -21,3 +21,8 @@ go.work.sum
 
 # Cursor local files
 .cursor/
+
+# Environment files
+.env
+.env.*
+!.env.example

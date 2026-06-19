@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  name: {{ include "todolist.fullname" . }}
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: todolist.ai
+    http:
+      paths:
+      - backend:
+          service:
+            name: todolist
+            port:
+              number: 443
+        path: /
+        pathType: Prefix
