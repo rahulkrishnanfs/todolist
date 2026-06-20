@@ -13,11 +13,13 @@ import (
 
 var Default = Build
 
+// Build the binary locally
 func Build() error {
 
 	return sh.Run("go", "build", "-o", "./bin/app", "./cmd")
 }
 
+// login to docker registry wiith the username and password from the env variable
 func DockerLogin() error {
 	err := godotenv.Load()
 	if err != nil {
@@ -32,11 +34,13 @@ func DockerLogin() error {
 		`echo $DKPASSWORD | docker login -u $DKUSERNAME --password-stdin`)
 }
 
+// Build the docker image and tagged with version
 func DockerBuild() error {
 
 	return sh.Run("docker", "build", "-t", "rahulkrishnanfs/todolist:v1", ".")
 }
 
+// Push the docker image to the docker image registry
 func DockerPush() error {
 	return sh.Run("docker", "push", "rahulkrishnanfs/todolist:v1")
 
