@@ -315,6 +315,7 @@ Cursor agent.
 | --- | --- | --- |
 | `commit-with-issue` | Creates a Conventional Commit (issue number at the end of the subject) on a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
 | `code-review-update` | Re-scans the source and updates `docs/codereview.md` (finding statuses + new findings) from architect, senior-engineer, hacker, and security perspectives. Writes only that file. | `/code-review-update` |
+| `codereview-to-issues` | Reads `docs/codereview.md` and opens a GitHub issue per Open finding (defects → `bug_report`, design/enhancement gaps → `feature_request`), with dedup and a preview step. Writes only GitHub issues. | `/codereview-to-issues` |
 | `readme-update` | Re-scans the source and updates this `README.md` (structure, API, C4 diagrams, tooling) to stay accurate for newcomers. Writes only this file. | `/readme-update` |
 
 ### `commit-with-issue`
@@ -346,6 +347,17 @@ re-scans the source, re-verifies each existing finding (flipping its status to
 Resolved / Partial / Open), and adds new findings reviewed from four perspectives:
 software architect, senior expert programmer, hacker/attacker, and security expert.
 It only ever writes `docs/codereview.md`.
+
+### `codereview-to-issues`
+
+Run `/codereview-to-issues` to turn the **Open** findings in
+[`docs/codereview.md`](docs/codereview.md) into GitHub issues — one per finding,
+using the repo's own templates: defects become **bug reports** (`bug` label) and
+missing-capability / design items become **feature requests** (`enhancement`
+label). It resolves the repo from the git remote, dedups against existing issues
+via a `[codereview <id>]` title marker, previews the plan for your go-ahead, then
+creates the issues one by one. It only ever writes GitHub issues (never source or
+`docs/codereview.md`).
 
 ### `readme-update`
 

@@ -29,6 +29,8 @@ Status legend: **Resolved** fixed in current code, **Partial** partly addressed,
 > - Plus 5.10 (JWT context key / no RBAC), 6.7 (config error handling), 6.8 (Helm probes/limits), 9.2 (CI Go-version mismatch), and 1.9 (auth middleware fall-through).
 >
 > Presentation unchanged: findings render as a master **Findings index** plus a per-finding `Field | Detail` table so each row maps onto a JIRA/GitHub issue. Citations were updated to the new `pkg/` paths.
+>
+> Re-verification pass 2 (2026-06-20): re-read the working tree; the only changes since the previous pass are cosmetic — `magfile.go` gained per-target doc comments and `charts/todolist/Chart.yaml` metadata. No `pkg/` source, `cmd/main.go`, config, Dockerfile, or CI changed, so **every finding's status is unchanged**. All 33 Open findings were filed as GitHub issues (`#28`–`#60`); a separate housekeeping issue (`#61`, `enhancement`) tracks the Helm chart name fix and the (now partially done) `magfile.go` comments.
 
 ---
 
