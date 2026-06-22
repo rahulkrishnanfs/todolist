@@ -80,3 +80,32 @@ configuration : https://github.com/shijuvar/gokit/blob/master/examples/http-app/
 https://github.com/shijuvar/gokit/blob/master/examples/http-app/pkg/bootstrapper/bootstrapper.go
 
 https functionality
+
+
+
+plural should not be added in package directory 
+config is not a util
+pkg should be moved to internal 
+
+https://en.wikipedia.org/wiki/Cross-cutting_concern
+
+decorator pattern wull be used for Cross-cutting_concern
+
+parameter will be single route or entire routes (https://github.com/shijuvar/gokit/blob/master/examples/http-app/pkg/router/product.go#L22C3-L22C78)
+
+https://github.com/shijuvar/gokit/blob/master/examples/http-api/cmd/servemux/main.go
+
+https://github.com/shijuvar/gokit/blob/master/examples/http/middleware/flowcontrol.go#L51C12-L51C49
+
+https://github.com/shijuvar/gokit/blob/master/examples/http-api/middleware/middleware.go#L12 - > Latest
+
+
+middleware can be added 
+path prefix 
+entire route 
+individual route 
+
+
+one time activities will be in boostrapper -> https://github.com/shijuvar/gokit/blob/master/examples/http-app/pkg/bootstrapper/bootstrapper.go
+
+https://shijuvar.medium.com/building-openapi-based-rest-api-in-go-using-huma-framework-with-surrealdb-844ded6a856e

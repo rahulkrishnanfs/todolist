@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"todolist/pkg/auth"
 	"todolist/pkg/model"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type UserController struct {
@@ -21,6 +23,10 @@ func NewUserController(user model.UserRepository, logger *slog.Logger, auth *aut
 		logger: logger,
 		auth:   auth,
 	}
+}
+
+type Output struct {
+	Status string `json:"status" jsonschema:"user has been created"`
 }
 
 func (u *UserController) Create(w http.ResponseWriter, r *http.Request) {
@@ -80,4 +86,22 @@ func (u *UserController) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
+}
+
+func (u *UserController) CreateUserTool(ctx context.Context, req *mcp.CallToolRequest, user model.User) (
+	*mcp.CallToolResult,
+	Output,
+	error,
+) {
+	err := u.user.Create(user)
+	if err != nil {
+		u.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to create the user object",
+			slog.String("error", err.Error()))
+		return nil, Output{}, err
+
+	}
+	u.logger.LogAttrs(context.Background(), slog.LevelInfo,
+		"user has been created")
+	return nil, Output{Status: "User has been created"}, nil
 }

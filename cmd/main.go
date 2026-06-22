@@ -8,9 +8,12 @@ import (
 
 	"todolist/pkg/auth"
 	"todolist/pkg/controller"
+	"todolist/pkg/mcptools"
 	"todolist/pkg/memorystore"
 	"todolist/pkg/router"
 	"todolist/pkg/utils"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
@@ -42,14 +45,21 @@ func main() {
 	router.SetTodoRoutes(*todoController, mux, logger, auth)
 	router.SetUserRoutes(*userController, mux, logger)
 
+	// create mcp server for todolist
+	mcpserver := mcp.NewServer(&mcp.Implementation{Name: "todolist", Title: "todolist", Version: "1.0.0"}, nil)
+	mcptools.SetTools(mcpserver, mux, *userController)
+
 	server := &http.Server{
 		Addr:    config.Service.Port,
 		Handler: mux,
 	}
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "Listening on port ...", slog.String("port", config.Service.Port))
+	// if err := server.ListenAndServe(); err != nil {
+	// reference : https://github.com/denji/golang-tls
 	if err := server.ListenAndServeTLS(config.Service.ServerCert, config.Service.ServerKey); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelError, "http server stopped",
 			slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+
 }

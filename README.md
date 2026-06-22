@@ -9,13 +9,23 @@ architecture (ports and adapters). Domain models and persistence are decoupled
 through repository interfaces, so the storage backend can be swapped without
 touching business logic.
 
-The project ships with an in-memory store and a REST API (`net/http`) served
-over **HTTPS/TLS**. Write/read routes for todos and categories are protected by
-**RS256 JWT authentication**; clients obtain a token via a user signup/login
-flow. Runtime settings (port, keystore, TLS cert/key) are loaded from
-`config/properties.toml`. The JWT signing keys are loaded from a PKCS#12
-keystore, while the TLS server certificate and key are loaded from PEM files.
-The listen port defaults to `:8080`.
+The project ships with an in-memory store and a REST API (`net/http`).
+Write/read routes for todos and categories are protected by **RS256 JWT
+authentication**; clients obtain a token via a user signup/login flow. The same
+server also exposes a **Model Context Protocol (MCP)** endpoint at `/mcp`, so
+MCP clients (e.g. Cursor) can drive the service through tools — currently a
+`create_user` tool. Runtime settings (port, keystore, TLS cert/key) are loaded
+from `config/properties.toml`, and the JWT signing keys are loaded from a
+PKCS#12 keystore. The listen port defaults to `:8080`.
+
+> **Transport note:** the server listens over **HTTPS/TLS**
+> (`server.ListenAndServeTLS` in `cmd/main.go`), using the cert/key referenced
+> by `config/properties.toml` (`server_cert` / `server_key`). The shipped cert
+> is signed by a local custom CA with a `todolist.ai` SAN, so clients must
+> either trust that CA (see
+> [`docs/2.1_trusting_custom_ca.md`](docs/2.1_trusting_custom_ca.md)) or skip
+> verification (`curl -k`). The `/mcp` endpoint (the `create_user` tool) is
+> **not yet authenticated** (see the Roadmap).
 
 ## Features
 
@@ -27,8 +37,13 @@ The listen port defaults to `:8080`.
   depend on the abstractions, not concrete storage.
 - JWT auth (`auth.Authenticator`): RS256 token generation on login and
   `AuthorizeRequest` middleware on protected routes.
-- HTTPS/TLS server via `http.Server.ListenAndServeTLS`, using a PEM certificate
-  and key loaded from disk.
+- MCP integration (`pkg/mcptools`): an MCP server (`modelcontextprotocol/go-sdk`)
+  mounted on the same `ServeMux` at `/mcp` via `NewStreamableHTTPHandler`,
+  exposing a `create_user` tool backed by `UserController.CreateUserTool`.
+  (DNS-rebinding protection is currently disabled via
+  `DisableLocalhostProtection: true` for local development.)
+- HTTPS server via `http.Server.ListenAndServeTLS`, using the PEM cert/key paths
+  from config (the plain-HTTP `ListenAndServe` call is kept commented out).
 - PKCS#12 keystore loading (`utils.Secret`) into an RSA key pair for JWT signing.
 - TOML configuration (`utils.Config`) for port, keystore, and TLS cert/key
   settings.
@@ -46,12 +61,14 @@ The listen port defaults to `:8080`.
 ```text
 todolist/
 ├── cmd/
-│   └── main.go                     # Entrypoint: loads config + keystore, wires stores/controllers/auth/routes, starts TLS server
+│   └── main.go                     # Entrypoint: loads config + keystore, wires stores/controllers/auth/routes + MCP tools, starts HTTPS server
 ├── pkg/
 │   ├── controller/
 │   │   ├── todo_controller.go      # TodoController (depends on TodoRepository)
 │   │   ├── category_controller.go  # CategoryController (depends on CategoryRepository)
-│   │   └── user_controller.go      # UserController: signup + login, issues JWT
+│   │   └── user_controller.go      # UserController: signup + login (issues JWT) + CreateUserTool (MCP)
+│   ├── mcptools/
+│   │   └── user_mcp.go             # SetTools: registers the create_user MCP tool + mounts /mcp (StreamableHTTPHandler)
 │   ├── router/
 │   │   ├── todo_routes.go          # SetTodoRoutes: /api/v1/todos handlers (JWT-protected)
 │   │   ├── category_routes.go      # SetCategoryRoutes: /api/v1/categories handlers (JWT-protected)
@@ -68,15 +85,14 @@ todolist/
 │   └── model/
 │       └── model.go                # Domain entities (Todo, Category, User) + repository ports
 ├── config/
-│   ├── properties.toml             # Service config: port, keystore path + password, TLS cert/key paths
-│   └── properties.toml.dev         # Local-dev config (absolute paths) — ignored by git/docker
+│   └── properties.toml             # Service config: port, keystore path + password, TLS cert/key paths
 ├── charts/todolist/                # Helm chart: Deployment, Service, ConfigMap, Secret, Ingress
 ├── scripts/                        # docker-run.sh, k8s-secrets.sh helpers
-├── secrets/                        # PKCS#12 keystore (JWT) + PEM TLS cert/key (keep real secrets out of git)
-├── docs/                           # codereview.md, status-code/key-gen/k8s notes
+├── secrets/                        # PKCS#12 keystore (JWT) + custom-CA/server PEM TLS cert+key (keep real secrets out of git)
+├── docs/                           # codereview.md, design/, HTTPS status codes, cert/key generation, trusting the CA, k8s notes
 ├── magfile.go                      # Mage targets: build, docker login/build/push
 ├── Dockerfile                      # Multi-stage build -> distroless nonroot image
-├── .github/workflows/              # SonarCloud analysis CI
+├── .github/workflows/              # CI: SonarCloud, golangci-lint, AI review, issue labeler, moderator
 ├── go.mod                          # Module: todolist (Go 1.25)
 └── README.md
 ```
@@ -85,10 +101,13 @@ All application packages live under `pkg/` (imported as `todolist/pkg/...`); `cm
 
 ## Getting Started
 
-Requirements: **Go 1.25+**. A PKCS#12 keystore (for JWT signing), a TLS
-certificate/key pair (PEM), and a config file are required at startup. See
-[`docs/2_key_generation.md`](docs/2_key_generation.md) for the OpenSSL commands
-that generate the keystore and the self-signed PEM cert/key.
+Requirements: **Go 1.25+**. A PKCS#12 keystore (for JWT signing) **and** a TLS
+certificate/key pair (PEM, used by `ListenAndServeTLS`) are required at startup,
+along with the config file. See
+[`docs/2_cert_key_generation.md`](docs/2_cert_key_generation.md) for the OpenSSL
+commands that generate the keystore and the CA-signed server cert/key, and
+[`docs/2.1_trusting_custom_ca.md`](docs/2.1_trusting_custom_ca.md) for trusting
+the custom CA so clients don't need `curl -k`.
 
 1. Ensure `config/properties.toml` points at a valid keystore and TLS cert/key:
 
@@ -97,8 +116,8 @@ that generate the keystore and the self-signed PEM cert/key.
 port = ":8080"
 keystore_file_path = "/absolute/path/to/secrets/keystore.p12"
 keystore_password = "changeit"
-server_cert = "/absolute/path/to/secrets/servercert.pem"
-server_key = "/absolute/path/to/secrets/serverkey.pem"
+server_cert = "/absolute/path/to/secrets/fullchain.crt"
+server_key = "/absolute/path/to/secrets/server.key"
 ```
 
 2. Run from the repository root (config is read from `./config/properties.toml`):
@@ -107,8 +126,8 @@ server_key = "/absolute/path/to/secrets/serverkey.pem"
 go run ./cmd
 ```
 
-This loads the config, keystore, and TLS material, wires up the in-memory
-stores, controllers, auth, and routes, then serves HTTPS on the configured port
+This loads the config and keystore, wires up the in-memory stores, controllers,
+auth, REST routes, and the MCP tools, then serves HTTPS on the configured port
 (default `:8080`). Todo/category endpoints require a JWT — sign up and log in
 first to get one.
 
@@ -128,14 +147,16 @@ first to get one.
 | GET | `/api/v1/categories/{id}` | Bearer | Get a category by id |
 | PUT | `/api/v1/categories/{id}` | Bearer | Update a category |
 | DELETE | `/api/v1/categories/{id}` | Bearer | Delete a category by id |
+| POST | `/mcp` | None | MCP endpoint (streamable HTTP) exposing the `create_user` tool |
 
-Example flow (the server uses HTTPS; `-k` accepts the self-signed certificate):
+Example flow (the server runs over HTTPS; `-k` skips verification of the
+self-signed cert — trust the custom CA to drop it):
 
 ```bash
 # 1. Sign up
 curl -k -X POST https://localhost:8080/api/v1/users/signup \
   -H 'Content-Type: application/json' \
-  -d '{"username":"alice","password":"s3cret","email_address":"alice@example.com"}'
+  -d '{"uid":"u1","username":"alice","password":"s3cret","email_address":"alice@example.com"}'
 
 # 2. Log in and capture the token
 TOKEN=$(curl -sk -X POST https://localhost:8080/api/v1/users/login \
@@ -151,13 +172,51 @@ curl -k -X POST https://localhost:8080/api/v1/todos \
 curl -k https://localhost:8080/api/v1/todos -H "Authorization: Bearer $TOKEN"
 ```
 
+### MCP (Model Context Protocol)
+
+The server registers an MCP server (`name: "todolist"`, `version: 1.0.0`) and
+mounts it at `/mcp` using the go-sdk's streamable-HTTP handler. It currently
+exposes one tool:
+
+| Tool | Description | Required arguments |
+| --- | --- | --- |
+| `create_user` | Create a new user account for the todolist service | `uid`, `username`, `password`, `email_address` |
+
+To consume it from an MCP client such as Cursor, add the endpoint to your
+`mcp.json` (project-level `.cursor/mcp.json` or global `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "todolist": {
+      "type": "http",
+      "url": "https://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+Because the server uses a self-signed (custom-CA) certificate, the MCP client
+must trust that CA — otherwise the connection is rejected. See
+[`docs/2.1_trusting_custom_ca.md`](docs/2.1_trusting_custom_ca.md). Start the
+server first, then enable `todolist` in Cursor's MCP settings; the `create_user`
+tool will become available to the agent.
+
+> The endpoint currently has **no authentication** and DNS-rebinding protection
+> is disabled (`DisableLocalhostProtection: true`) for local development — do
+> not expose it as-is (see the Roadmap).
+
 ## Architecture Overview
 
 The application follows a ports-and-adapters layout:
 
-- An HTTPS layer: `http.Server.ListenAndServeTLS` terminates TLS using the PEM
-  cert/key, and a `ServeMux` (wired by the `pkg/router` package) maps RESTful
-  `/api/v1/*` routes to controller methods.
+- An HTTPS layer: `http.Server.ListenAndServeTLS` serves a `ServeMux` (wired by
+  the `pkg/router` package) that maps RESTful `/api/v1/*` routes to controller
+  methods, using the cert/key from config. (A commented-out plain-HTTP
+  `ListenAndServe` path remains for local experiments.)
+- An MCP layer: `pkg/mcptools.SetTools` registers the `create_user` tool on an
+  `mcp.Server` and mounts it on the same `ServeMux` at `/mcp` via
+  `NewStreamableHTTPHandler`, so MCP clients hit the service alongside REST.
 - Controllers (HTTP handlers) depend on repository **interfaces**, never on a
   concrete store.
 - Repository interfaces (`TodoRepository`, `CategoryRepository`,
@@ -171,16 +230,17 @@ The application follows a ports-and-adapters layout:
   `UserController.Login` mints tokens with the private key.
 - **Config** (`utils.Config`) loads `config/properties.toml`; **secrets**
   (`utils.Secret`) decode a PKCS#12 keystore into the RSA key pair injected into
-  the `Authenticator`. The TLS server certificate and key (PEM) are read
-  directly from the paths in the config by `ListenAndServeTLS`.
+  the `Authenticator`. The TLS server certificate and key (PEM) listed in the
+  config are consumed at startup by `ListenAndServeTLS`.
 - A `*slog.Logger` (JSON handler writing to stdout) is constructed in
   `cmd/main.go` and injected into the controllers, which emit structured logs
   for each request.
 
 ```text
-HTTPS (TLS)  ->  route  ->  JWT middleware  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
-                                                      |
-                                                      +--> structured logs (slog JSON -> stdout)
+HTTPS  ->  route  ->  JWT middleware  ->  Controller (handler)  ->  Repository interface (port)  ->  In-memory adapter  ->  Domain model
+   |                                            |
+   |                                            +--> structured logs (slog JSON -> stdout)
+   +--> /mcp (StreamableHTTPHandler) -> create_user tool -> UserController.CreateUserTool -> UserRepository
 ```
 
 ## C4 Architecture Diagrams
@@ -193,9 +253,11 @@ in Mermaid, which renders natively on GitHub.
 ```mermaid
 flowchart TD
     user["API Client / User<br/>[Person]<br/>Tracks tasks and categories"]
-    system["Todo List API<br/>[Software System]<br/>Manages TODO items and categories over HTTP"]
+    agent["AI Agent / MCP Client<br/>[Person/System]<br/>e.g. Cursor"]
+    system["Todo List API<br/>[Software System]<br/>Manages TODO items and categories over HTTPS"]
 
     user -->|"Signs up / logs in for a JWT, then<br/>sends authenticated HTTPS/JSON requests"| system
+    agent -->|"Calls MCP tools (create_user)<br/>over HTTPS at /mcp"| system
 ```
 
 ### Level 2 - Container
@@ -203,37 +265,52 @@ flowchart TD
 ```mermaid
 flowchart TD
     user["API Client / User<br/>[Person]"]
+    agent["AI Agent / MCP Client<br/>[Person/System]"]
 
     subgraph todoApp [Todo List API]
         api["HTTPS API Server<br/>[Container: Go net/http TLS on :8080]<br/>Routes, JWT auth, slog logging"]
+        mcpsrv["MCP Server<br/>[Component: go-sdk StreamableHTTP at /mcp]<br/>create_user tool"]
         authc["JWT Authenticator<br/>[Component: golang-jwt RS256]<br/>Signs + verifies bearer tokens"]
         store["In-Memory Stores<br/>[Container: Go maps]<br/>TODOs, Categories, Users"]
     end
 
     cfg["Config File<br/>[config/properties.toml]"]
     keys["RSA Keystore<br/>[secrets/keystore.p12 - PKCS#12]"]
-    tls["TLS Cert + Key<br/>[secrets/servercert.pem + serverkey.pem]"]
+    tls["TLS Cert + Key<br/>[secrets/fullchain.crt + server.key]"]
     logs["Structured Logs<br/>[stdout: JSON via log/slog]"]
 
     user -->|"HTTPS/JSON + Bearer JWT<br/>/api/v1/*"| api
+    agent -->|"MCP over HTTPS<br/>/mcp"| mcpsrv
+    api -->|"same ServeMux"| mcpsrv
     api -->|"sign / verify tokens"| authc
     api -->|"reads / writes via repository ports"| store
-    api -->|"loads port, keystore + TLS paths"| cfg
+    mcpsrv -->|"create_user -> Create"| store
+    api -->|"loads port + keystore + cert paths"| cfg
+    api -->|"serves TLS with"| tls
     authc -->|"loads RSA key pair"| keys
-    api -->|"loads TLS cert/key (ListenAndServeTLS)"| tls
     api -->|"emits structured JSON logs"| logs
 ```
+
+> The TLS cert/key (`secrets/fullchain.crt` + `secrets/server.key`) are loaded at
+> startup by `ListenAndServeTLS`; the cert is signed by a local custom CA with a
+> `todolist.ai` SAN.
 
 ### Level 3 - Component
 
 ```mermaid
 flowchart TD
     user["API Client / User<br/>[Person]"]
+    agent["AI Agent / MCP Client<br/>[Person/System]"]
 
-    subgraph server [HTTPS API Server - cmd + router packages]
-        tlssrv["http.Server (TLS)<br/>[Component: cmd]<br/>ListenAndServeTLS on :8080"]
+    subgraph server [HTTP API Server - cmd + router packages]
+        httpsrv["http.Server<br/>[Component: cmd]<br/>ListenAndServeTLS on :8080"]
         mux["ServeMux + Set*Routes<br/>[Component: pkg/router]<br/>Maps /api/v1/* to handlers"]
         mw["AuthorizeRequest<br/>[Middleware: pkg/auth]<br/>Validates JWT on todo/category routes"]
+    end
+
+    subgraph mcppkg [MCP - pkg/mcptools package]
+        setTools["SetTools<br/>[Component]<br/>Registers tools + mounts /mcp"]
+        mcpHandler["/mcp StreamableHTTPHandler<br/>[Component]<br/>create_user tool"]
     end
 
     subgraph authpkg [Auth - pkg/auth package]
@@ -243,7 +320,7 @@ flowchart TD
     subgraph handlers [Controllers - pkg/controller package]
         todoCtrl["TodoController<br/>[Component]"]
         catCtrl["CategoryController<br/>[Component]"]
-        userCtrl["UserController<br/>[Component]<br/>signup + login -> JWT"]
+        userCtrl["UserController<br/>[Component]<br/>signup + login -> JWT; CreateUserTool"]
     end
 
     subgraph ports [Ports - pkg/model package]
@@ -261,7 +338,6 @@ flowchart TD
     subgraph cfgpkg [Config + Secrets - pkg/utils package]
         cfg["Config<br/>[Component]<br/>Loads properties.toml"]
         secret["Secret<br/>[Component]<br/>Loads PKCS#12 -> RSA keys"]
-        tlsfiles["TLS Cert + Key<br/>[PEM files: servercert.pem + serverkey.pem]"]
     end
 
     subgraph domain [Domain - pkg/model package]
@@ -273,9 +349,13 @@ flowchart TD
 
     logger["slog.Logger<br/>[Component]<br/>JSON handler writing to stdout"]
 
-    user -->|"HTTPS/JSON (+ Bearer JWT)"| tlssrv
-    tlssrv -->|"serves"| mux
+    user -->|"HTTPS/JSON (+ Bearer JWT)"| httpsrv
+    agent -->|"MCP over HTTPS /mcp"| mcpHandler
+    httpsrv -->|"serves"| mux
     mux --> mw
+    mux -->|"mounts /mcp"| mcpHandler
+    setTools -->|"registers create_user + handler"| mcpHandler
+    mcpHandler -->|"create_user"| userCtrl
     mw -->|"verify token"| authr
     mw -->|"protected routes"| todoCtrl
     mw -->|"protected routes"| catCtrl
@@ -292,8 +372,7 @@ flowchart TD
 
     secret -->|"RSA keys"| authr
     cfg -->|"port + keystore path"| secret
-    cfg -->|"port + TLS cert/key paths"| tlssrv
-    tlsfiles -->|"TLS cert + key"| tlssrv
+    cfg -->|"port + cert/key paths"| httpsrv
 
     todoMap -->|"stores"| todoModel
     catMap -->|"stores"| catModel
@@ -315,6 +394,7 @@ Cursor agent.
 | --- | --- | --- |
 | `commit-with-issue` | Creates a Conventional Commit (issue number at the end of the subject) on a matching `feature/#[issue]-[branch]` branch. | `/commit-with-issue` |
 | `code-review-update` | Re-scans the source and updates `docs/codereview.md` (finding statuses + new findings) from architect, senior-engineer, hacker, and security perspectives. Writes only that file. | `/code-review-update` |
+| `codereview-to-issues` | Opens a GitHub issue for every **Open** finding in `docs/codereview.md`, mapping defects to the bug-report template and design gaps to the feature-request template (via the GitHub MCP). | `/codereview-to-issues` |
 | `readme-update` | Re-scans the source and updates this `README.md` (structure, API, C4 diagrams, tooling) to stay accurate for newcomers. Writes only this file. | `/readme-update` |
 
 ### `commit-with-issue`
@@ -347,6 +427,14 @@ Resolved / Partial / Open), and adds new findings reviewed from four perspective
 software architect, senior expert programmer, hacker/attacker, and security expert.
 It only ever writes `docs/codereview.md`.
 
+### `codereview-to-issues`
+
+Run `/codereview-to-issues` to turn the **Open** findings in
+[`docs/codereview.md`](docs/codereview.md) into GitHub issues — one per finding.
+Defects are filed with the bug-report template and missing-capability/design
+items with the feature-request template, created one by one (with dedup) through
+the GitHub MCP server (`user-github`).
+
 ### `readme-update`
 
 Run `/readme-update` to refresh this README from the code. It reconciles the
@@ -360,9 +448,14 @@ source, and keeps this Developer Tooling table in sync. It only ever writes
 - Per-user authorization / data ownership (scope todos and categories to the
   authenticated user).
 - Move secrets out of the repo; load keystore path/password from environment or
-  a secret manager.
-- Align the CI Go version (`.github/workflows/sonarcloud.yml` pins 1.22) with
-  `go.mod` (1.25); the Dockerfile build stage already uses `golang:1.25`.
+  a secret manager (TLS keys and the keystore are currently under `secrets/`).
+- Replace the developer-machine absolute paths in `config/properties.toml` with
+  container-relative paths / env overrides so the image runs outside the dev box.
+- Secure the `/mcp` endpoint: add authentication (the MCP `create_user` tool is
+  currently unauthenticated) and re-enable DNS-rebinding protection (drop
+  `DisableLocalhostProtection`).
+- Align the CI Go version (`.github/workflows/sonarcloud.yml` pins 1.22.0) with
+  `go.mod` (1.25); the lint workflow and Dockerfile build stage already use 1.25.
 - Persistent storage adapter (SQL or file-based) implementing the existing
   repository ports.
 - Input validation and consistent JSON error responses (map errors to

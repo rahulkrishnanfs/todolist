@@ -19,8 +19,9 @@ go.work.sum
 .idea/
 .vscode/
 
-# Cursor local files
-.cursor/
+# Cursor local files (keep skills tracked, ignore everything else)
+.cursor/*
+!.cursor/skills/
 
 # Environment files
 .env
