@@ -8,6 +8,20 @@ Severity legend: **Critical** can cause data loss/incorrect behavior/security ex
 
 Status legend: **Resolved** fixed in current code, **Partial** partly addressed, **Open** still outstanding.
 
+> **Re-review note (2026-06-22):** An MCP (Model Context Protocol) server was added and wired into the existing HTTP server. Notable changes and their review impact:
+> - New `pkg/mcptools` package (`SetTools`) mounts an MCP server on the shared `ServeMux` at `/mcp` via the go-sdk `StreamableHTTPHandler` (`cmd/main.go:48-50`).
+> - A `usercreate` MCP tool was added (`UserController.CreateUserTool`, `pkg/controller/user_controller.go:91-107`); `User` gained `jsonschema` tags for tool input.
+> - TLS was re-enabled (`ListenAndServeTLS`) using a custom CA + SAN cert (`secrets/ca.*`, `secrets/server.*`, `secrets/fullchain.crt`); `config/properties.toml` now points at those files using **machine-specific absolute paths**.
+> - New CI workflows: `lint.yml` (golangci-lint on Go 1.25), `issue-labeler.yaml`, `moderator.yml`. `sonarcloud.yml` still pins Go 1.22.0 (9.2 unchanged).
+> - New docs: `docs/design/mcp-per-user-static-token-auth.md`, `docs/2_cert_key_generation.md`, `docs/2.1_trusting_custom_ca.md`.
+>
+> **New findings this pass:**
+> - **5.11 (Critical):** the `/mcp` endpoint is completely unauthenticated, exposing the `usercreate` tool to any caller.
+> - **5.12 (Medium):** `DisableLocalhostProtection: true` disables the SDK's DNS-rebinding protection unconditionally.
+> - **1.10 (Critical):** the MCP `usercreate` path reaches the unguarded `UserMap` (1.7) and applies no validation, and leaks raw errors to the client.
+> - **6.10 (High):** `config/properties.toml` uses developer-machine absolute paths that are baked into the image and will not exist in the container/k8s.
+> - **5.7 updated:** more private-key material now sits under `secrets/` (CA key, server key) and `secrets/` is still not in `.gitignore`.
+
 > **Re-review note (2026-06-20):** The codebase was substantially restructured and grown since the last pass. Notable changes:
 > - All application code moved under a `pkg/` layout: `pkg/controller`, `pkg/memorystore`, `pkg/model`, `pkg/router`, `pkg/auth`, `pkg/utils`. `cmd/main.go` is now wiring only and imports `todolist/pkg/*`. The old top-level `controller/`, `memorystore/`, etc. are deleted from the working tree.
 > - Routes moved out of `cmd` into a dedicated `pkg/router` package.
@@ -45,6 +59,7 @@ Status legend: **Resolved** fixed in current code, **Partial** partly addressed,
 | [1.7](#17--usermap-has-no-mutex-concurrent-map-access) | Critical | Open | Programmer | `UserMap` has no mutex (data race) | `pkg/memorystore/in_memory_user.go:8-33` |
 | [1.8](#18--newsecret-nil-logger--extract-ignores-errors) | Critical | Open | Programmer | `NewSecret` nil logger + `Extract` panics on bad keystore | `pkg/utils/secrets.go:22-47` |
 | [1.9](#19--authorizerequest-falls-through-on-invalid-token) | Medium | Open | Programmer | Auth middleware does nothing when token is non-valid | `pkg/auth/auth.go:70-75` |
+| [1.10](#110--mcp-usercreate-tool-shares-the-unguarded-usermap-and-skips-validation) | Critical | Open | Programmer/Hacker | MCP `usercreate` hits unguarded `UserMap`, no validation, leaks errors | `pkg/controller/user_controller.go:91-107` |
 | [2.1](#21--missing-serviceuse-case-layer) | High | Open | Architect | Missing service/use-case layer | `pkg/controller/` |
 | [2.2](#22--client-supplies-primary-keys) | High | Open | Architect | Client supplies primary keys | `pkg/controller/`, `pkg/memorystore/` |
 | [2.3](#23--no-referential-integrity-between-todo-category-and-user) | Medium | Open | Architect | No Todo↔Category↔User referential integrity | `pkg/model/model.go` |
@@ -68,6 +83,8 @@ Status legend: **Resolved** fixed in current code, **Partial** partly addressed,
 | [5.8](#58--secrets-and-keystore-password-embedded-in-repo-and-image) | Critical | Open | Security | Keystore password + key material in repo/image | `config/properties.toml:4`, `charts/todolist/templates/{secrets,config}.yaml` |
 | [5.9](#59--plaintext-password-storage-and-comparison) | High | Open | Security | Passwords stored/compared in plaintext | `pkg/memorystore/in_memory_user.go`, `pkg/model/model.go` |
 | [5.10](#510--jwt-context-key-collision-and-no-rbacownership) | Medium | Open | Security | String context key; hardcoded role; no RBAC | `pkg/auth/auth.go:71`, `pkg/controller/user_controller.go:71` |
+| [5.11](#511--mcp-endpoint-is-unauthenticated) | Critical | Open | Security | `/mcp` has no auth; `usercreate` tool is public | `pkg/mcptools/user_mcp.go:19-22`, `cmd/main.go:48-50` |
+| [5.12](#512--dns-rebinding-protection-disabled-on-the-mcp-handler) | Medium | Open | Security | `DisableLocalhostProtection: true` on the MCP handler | `pkg/mcptools/user_mcp.go:19-22` |
 | [6.1](#61--listenandserve-error-is-ignored) | High | Resolved | Ops | `ListenAndServe(TLS)` error ignored | `cmd/main.go:50-54` |
 | [6.2](#62--no-graceful-shutdown) | High | Open | Ops | No graceful shutdown | `cmd/main.go` |
 | [6.3](#63--dockerfile-does-not-copy-gosum) | Medium | Resolved | Ops | Dockerfile now copies `go.sum` | `Dockerfile:4` |
@@ -77,6 +94,7 @@ Status legend: **Resolved** fixed in current code, **Partial** partly addressed,
 | [6.7](#67--initconfig-panics-and-main-ignores-config-errors) | Medium | Open | Ops | `InitConfig` panics; `main` ignores config error | `pkg/utils/config.go:24-34`, `cmd/main.go:18-23` |
 | [6.8](#68--helm-deployment-lacks-probes-limits-and-securitycontext) | Medium | Open | Ops | Helm Deployment lacks probes/limits/securityContext | `charts/todolist/templates/deployment.yaml` |
 | [6.9](#69--committed-build-artifact-not-gitignored) | Low | Open | Ops | `bin/app` artifact not ignored | `bin/app`, `.gitignore` |
+| [6.10](#610--machine-specific-absolute-paths-in-config) | High | Open | Ops | `properties.toml` uses dev-machine absolute paths baked into the image | `config/properties.toml:3-6`, `Dockerfile:14` |
 | [7.1](#71--fmtprintln-debugging-statements) | High | Resolved | Observability | `fmt.Println` debugging | `pkg/controller/*.go` |
 | [7.2](#72--no-request-logging--middleware) | Medium | Partial | Observability | No access-log/recover/request-id middleware | `cmd/`, `pkg/router/` |
 | [7.3](#73--no-metricstracing) | Low | Open | Observability | No metrics/tracing | `cmd/` |
@@ -393,6 +411,39 @@ func (s *Secret) Extract() (*rsa.PrivateKey, *rsa.PublicKey, error) {
 		}
 ```
 
+### 1.10 — MCP `usercreate` tool shares the unguarded `UserMap` and skips validation
+
+| Field | Detail |
+| --- | --- |
+| **Severity** | Critical |
+| **Status** | Open |
+| **Lens** | Programmer / Hacker |
+| **Location** | `pkg/controller/user_controller.go:91-107`, `pkg/mcptools/user_mcp.go:11-14` |
+| **Issue** | `CreateUserTool` calls `u.user.Create(user)` on the same `UserMap` that has no mutex (1.7), with no validation of `uid`/`username`/`password`/`email_address`, stores the password in plaintext (5.9), and returns the raw `err` to the MCP client. The tool input is bound straight to `model.User` (mass assignment, 5.6). |
+| **Impact** | The MCP surface multiplies the existing `UserMap` data race (concurrent tool calls + HTTP signups can crash the process), persists unvalidated/plaintext users, and leaks internal error strings to MCP clients. |
+| **How to reproduce** | Call the `usercreate` tool concurrently with `POST /api/v1/users/signup` (run with `-race`) → concurrent map read/write panic; call with an empty body → an empty user is stored. |
+| **Suggested fix** | Fix 1.7 (mutex), validate inputs and hash the password in a shared service layer (2.1/5.4/5.9), accept a narrow input DTO rather than `model.User` (5.6), and return a generic tool error while logging details server-side. |
+
+```91:107:pkg/controller/user_controller.go
+func (u *UserController) CreateUserTool(ctx context.Context, req *mcp.CallToolRequest, user model.User) (
+	*mcp.CallToolResult,
+	Output,
+	error,
+) {
+	err := u.user.Create(user)
+	if err != nil {
+		u.logger.LogAttrs(context.Background(), slog.LevelError,
+			"failed to create the user object",
+			slog.String("error", err.Error()))
+		return nil, Output{}, err
+
+	}
+	u.logger.LogAttrs(context.Background(), slog.LevelInfo,
+		"user has been created")
+	return nil, Output{Status: "User has been created"}, nil
+}
+```
+
 ---
 
 ## 2. System Design & Architecture
@@ -640,7 +691,7 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) error {
 | **Status** | Partial |
 | **Lens** | Security |
 | **Location** | `pkg/auth/auth.go`, `pkg/router/*.go`, `pkg/controller/user_controller.go` |
-| **Issue** | JWT authentication now guards all `todos`/`categories` routes via `AuthorizeRequest`, which is a real improvement. However: (a) there is **no authorization** — any authenticated user can read/modify/delete *any* record (IDOR), since data is not scoped by `UserID`/`UID`; (b) the role is hardcoded to `"testrole"` at login (`user_controller.go:71`) and never checked; (c) `users/signup` and `users/login` are (correctly) public, but signup is unbounded (anyone can create accounts). |
+| **Issue** | JWT authentication now guards all `todos`/`categories` routes via `AuthorizeRequest`, which is a real improvement. However: (a) there is **no authorization** — any authenticated user can read/modify/delete *any* record (IDOR), since data is not scoped by `UserID`/`UID`; (b) the role is hardcoded to `"testrole"` at login (`user_controller.go:71`) and never checked; (c) `users/signup` and `users/login` are (correctly) public, but signup is unbounded (anyone can create accounts); (d) the new `/mcp` endpoint has **no auth at all** (see 5.11), adding an entirely unauthenticated surface alongside the protected REST routes. |
 | **Impact** | Authentication without ownership/RBAC still allows cross-tenant data access once any account exists. |
 | **How to reproduce** | Sign up user A and user B; with B's token, `GET`/`DELETE` a todo created by A → succeeds. |
 | **Suggested fix** | Stamp `UserID`/`UID` from the token claims on create; filter reads/writes by the authenticated user; enforce roles where needed (see 5.10). |
@@ -652,13 +703,13 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request, dst *T) error {
 | **Severity** | Medium |
 | **Status** | Open |
 | **Lens** | Security |
-| **Location** | `cmd/main.go:45-48` |
+| **Location** | `cmd/main.go:52-55` |
 | **Issue** | `http.Server` is created with no `ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, or `IdleTimeout` (even though it now serves TLS). |
 | **Impact** | A slow client can hold connections open indefinitely (slowloris DoS). |
 | **How to reproduce** | Open a TLS connection and dribble headers slowly; the server keeps it open with no timeout. |
 | **Suggested fix** | Set sensible timeouts on `http.Server`. Current code and fix below. |
 
-```45:48:cmd/main.go
+```52:55:cmd/main.go
 	server := &http.Server{
 		Addr:    config.Service.Port,
 		Handler: mux,
@@ -722,10 +773,10 @@ server := &http.Server{
 | **Severity** | Critical |
 | **Status** | Open |
 | **Lens** | Security |
-| **Location** | `secrets/key.pem`, `secrets/serverkey.pem`, `secrets/keystore.p12`, `secrets/cert.pem`, `secrets/servercert.pem` |
-| **Issue** | The private keys and PKCS#12 keystore used for TLS and JWT signing are tracked in the repository (`git ls-files secrets/` lists all five). `.dockerignore` excludes `secrets/`, but `.gitignore` does **not**, so they are in version control history. |
-| **Impact** | Anyone with repo access (or a leak/fork) holds the server's private TLS key and the JWT signing key — they can decrypt/MITM traffic and forge valid JWTs for any user/role. This is a full authentication bypass. |
-| **How to reproduce** | `git log --stat -- secrets/` shows the committed key material; `openssl rsa -in secrets/serverkey.pem -check` validates the private key. |
+| **Location** | tracked: `secrets/key.pem`, `secrets/serverkey.pem`, `secrets/keystore.p12`, `secrets/cert.pem`, `secrets/servercert.pem`; new untracked: `secrets/ca.key`, `secrets/server.key`, `secrets/server.csr`, `secrets/ca.crt`, `secrets/server.crt`, `secrets/fullchain.crt` |
+| **Issue** | The private keys and PKCS#12 keystore used for TLS and JWT signing are tracked in the repository (`git ls-files secrets/` lists five). The TLS rework added a fresh CA key and server key under `secrets/` (currently untracked), and `.gitignore` still does **not** ignore `secrets/`, so the new keys are one `git add` away from being committed too. `.dockerignore` excludes `secrets/`, but the existing key material is already in version-control history. |
+| **Impact** | Anyone with repo access (or a leak/fork) holds the server's private TLS key, the new CA private key, and the JWT signing key — they can decrypt/MITM traffic, mint trusted certificates, and forge valid JWTs for any user/role. This is a full authentication bypass. |
+| **How to reproduce** | `git log --stat -- secrets/` shows the committed key material; `git status` shows the new untracked `secrets/*.key` files with no `.gitignore` entry; `openssl rsa -in secrets/server.key -check` validates a private key. |
 | **Suggested fix** | Remove `secrets/` from the index (`git rm --cached -r secrets/`), add `secrets/` to `.gitignore`, **rotate all keys and the keystore** (the committed ones are compromised), and inject key material at deploy time (k8s Secret/Vault), never via git. |
 
 ### 5.8 — Secrets and keystore password embedded in repo and image
@@ -777,6 +828,47 @@ if bcrypt.CompareHashAndPassword([]byte(stored.Password), []byte(attempt)) != ni
 | **How to reproduce** | n/a (design); `staticcheck ./...` flags the string context key. |
 | **Suggested fix** | Use an unexported key type (`type ctxKey struct{}`), read the username/role from context in handlers to scope data and enforce roles, and derive the role from the user record rather than a constant. |
 
+### 5.11 — MCP endpoint is unauthenticated
+
+| Field | Detail |
+| --- | --- |
+| **Severity** | Critical |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `pkg/mcptools/user_mcp.go:19-22`, `cmd/main.go:48-50` |
+| **Issue** | `SetTools` mounts the MCP `StreamableHTTPHandler` directly on the shared mux at `/mcp` with no auth middleware, while every `todos`/`categories` route is wrapped in `AuthorizeRequest`. Anyone who can reach the port can list and invoke tools — currently `usercreate` — with no token. The per-user static-token design exists only as a doc (`docs/design/mcp-per-user-static-token-auth.md`), not in code. |
+| **Impact** | Unauthenticated account creation (and any future tool) over MCP; combined with 1.10 it is also an unauthenticated crash/DoS vector. |
+| **How to reproduce** | `curl -k https://localhost:8080/mcp` with a JSON-RPC `tools/call` for `usercreate` (no `Authorization` header) → a user is created. |
+| **Suggested fix** | Wrap the `/mcp` handler with the same JWT middleware (or the designed static-token verifier via `go-sdk/mcp/auth.RequireBearerToken`) before mounting it; reject unauthenticated requests. See sample below. |
+
+```19:22:pkg/mcptools/user_mcp.go
+	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return mcpserver },
+		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true},
+	))
+```
+
+```go
+mcpHandler := mcp.NewStreamableHTTPHandler(
+	func(*http.Request) *mcp.Server { return mcpserver },
+	&mcp.StreamableHTTPOptions{},
+)
+mux.Handle("/mcp", authn.AuthorizeRequest(mcpHandler)) // require a valid token
+```
+
+### 5.12 — DNS-rebinding protection disabled on the MCP handler
+
+| Field | Detail |
+| --- | --- |
+| **Severity** | Medium |
+| **Status** | Open |
+| **Lens** | Security |
+| **Location** | `pkg/mcptools/user_mcp.go:19-22` |
+| **Issue** | `DisableLocalhostProtection: true` is set unconditionally, turning off the SDK's `Host`/`Origin` validation that defends against DNS-rebinding. It was added to make a `todolist.ai:8080` host header work during local development, but it ships in the same code path used everywhere. |
+| **Impact** | A malicious web page in the user's browser could rebind DNS and reach the local MCP server, invoking tools (compounded by the missing auth in 5.11). |
+| **How to reproduce** | n/a (design); the flag is hardcoded on, so `Host`/`Origin` are no longer checked. |
+| **Suggested fix** | Leave protection enabled and instead configure the allowed hosts, or gate `DisableLocalhostProtection` behind an explicit dev-only config flag (default off). Re-enable once 5.11 adds real auth. |
+
 ---
 
 ## 6. Deployment & Operations
@@ -788,13 +880,13 @@ if bcrypt.CompareHashAndPassword([]byte(stored.Password), []byte(attempt)) != ni
 | **Severity** | High |
 | **Status** | Resolved |
 | **Lens** | Ops |
-| **Location** | `cmd/main.go:50-54` |
+| **Location** | `cmd/main.go:59-63` |
 | **Issue** | The server-start error used to be ignored. |
 | **Impact** | Silent crash with no signal to operators. |
 | **How to reproduce** | n/a (resolved) |
 | **Suggested fix** | `main` now checks the `ListenAndServeTLS` error, logs it via `slog`, and exits non-zero (below). Once 6.2 lands, treat `http.ErrServerClosed` as a clean exit. |
 
-```50:54:cmd/main.go
+```59:63:cmd/main.go
 	if err := server.ListenAndServeTLS(config.Service.ServerCert, config.Service.ServerKey); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelError, "http server stopped",
 			slog.String("error", err.Error()))
@@ -941,6 +1033,26 @@ func InitConfig(configFile string, cfg *Config, logger *slog.Logger) (*Config, e
 | **Impact** | Risk of committing a large binary; repo clutter. |
 | **How to reproduce** | `mage build` then `git status` → `bin/app` shows as untracked. |
 | **Suggested fix** | Add `/bin/` to `.gitignore`. |
+
+### 6.10 — Machine-specific absolute paths in config
+
+| Field | Detail |
+| --- | --- |
+| **Severity** | High |
+| **Status** | Open |
+| **Lens** | Ops |
+| **Location** | `config/properties.toml:3-6`, `Dockerfile:14` |
+| **Issue** | `keystore_file_path`, `server_cert`, and `server_key` were changed from container paths (`/etc/todolist/secrets/...`) to a developer's home directory (`/Users/rahulra/claude/todolist/secrets/...`). The `Dockerfile` copies `config/` into the image, so this file ships baked in, and `main` loads it via the hard-coded `./config/properties.toml`. |
+| **Impact** | The container/k8s pod will fail to start (`open /Users/rahulra/...: no such file or directory`) because those paths don't exist outside the developer's machine; also a minor information disclosure of the local layout. There is also a trailing space after the `server_cert` value. |
+| **How to reproduce** | `docker build` then `docker run` the image → TLS startup fails because the keystore/cert paths don't resolve. |
+| **Suggested fix** | Use container-relative paths (e.g. `/etc/todolist/secrets/...` or `./secrets/...`) and allow an env override (6.4); keep developer-local paths out of the committed config. Current values below. |
+
+```3:6:config/properties.toml
+keystore_file_path = "/Users/rahulra/claude/todolist/secrets/keystore.p12"
+keystore_password  = "changeit"
+server_cert        = "/Users/rahulra/claude/todolist/secrets/fullchain.crt" 
+server_key         = "/Users/rahulra/claude/todolist/secrets/server.key"
+```
 
 ---
 
@@ -1117,10 +1229,10 @@ func InitConfig(configFile string, cfg *Config, logger *slog.Logger) (*Config, e
 | **Status** | Open |
 | **Lens** | QA / Ops |
 | **Location** | `.github/workflows/sonarcloud.yml:23-38` |
-| **Issue** | The workflow pins `go-version: '1.22.0'`, but `go.mod` requires `go 1.25.0`; the build/tests will fail to compile in CI. It also installs `golangci-lint@latest` and runs it as a hard gate, while `setup-go@v4`/`checkout@v3` are outdated and there is no `.golangci.yml`. |
-| **Impact** | CI cannot pass as written (toolchain too old for the module), so SonarCloud analysis never runs reliably. |
-| **How to reproduce** | Push to `main` → the "Set up Go 1.22" job fails building a `go 1.25` module. |
-| **Suggested fix** | Bump `go-version` to `1.25.x` (or use `go-version-file: go.mod`), update the actions, and add a checked-in `.golangci.yml`. |
+| **Issue** | `sonarcloud.yml` pins `go-version: '1.22.0'` (`:26`), but `go.mod` requires `go 1.25.0`; the build/tests will fail to compile in CI. It installs `golangci-lint@latest` as a hard gate, while `setup-go@v4`/`checkout@v3` are outdated and there is no `.golangci.yml`. A newer `.github/workflows/lint.yml` correctly uses Go `1.25` (`:21`), so the two workflows now disagree on the toolchain. |
+| **Impact** | The SonarCloud workflow cannot pass as written (toolchain too old for the module), so analysis never runs reliably; the inconsistent Go versions across workflows are a maintenance trap. |
+| **How to reproduce** | Push to `main` → the SonarCloud "Set up Go 1.22" job fails building a `go 1.25` module. |
+| **Suggested fix** | Align all workflows on `go-version-file: go.mod` (or `1.25.x`), update the actions, and add a checked-in `.golangci.yml`. |
 
 ---
 
@@ -1157,15 +1269,17 @@ Closed since the original review:
 
 Still outstanding (highest priority first):
 
-1. **Remove and rotate committed key material** — TLS/JWT keys are in git and the image/chart (5.7, 5.8).
-2. **Add a mutex to `UserMap`** — current code is an unauthenticated crash/data-race (1.7).
-3. **Fix `NewSecret`/`Extract`** — nil logger + swallowed errors panic on any keystore issue (1.8).
-4. **Hash passwords** — stop storing/comparing plaintext (5.9).
-5. **Reconcile path id with body id in `Update`**; stop trusting client-supplied state/ownership (1.6, 2.2, 5.6).
-6. **Authorization/ownership** — scope data per authenticated user; fix JWT context key/role (5.2, 5.10).
-7. Map errors to correct HTTP status codes; stop leaking `err.Error()` (4.1, 5.1).
-8. Add input validation + body size limit / strict decoding (5.4, 4.4).
-9. Add server timeouts and graceful shutdown (5.3, 6.2).
-10. Use `RLock` for todo reads (1.4); fix config error handling (6.7).
-11. Add probes/resources/securityContext + health endpoints (6.5, 6.8); recovery + logging middleware (7.2).
-12. Fix CI Go version (9.2); add unit/handler tests with `-race` (9.1); introduce a service layer (2.1); plan a persistent adapter (3.1).
+1. **Authenticate the `/mcp` endpoint** — it currently exposes the `usercreate` tool to anyone; re-enable DNS-rebinding protection (5.11, 5.12, 1.10).
+2. **Remove and rotate committed key material** — TLS/JWT keys are in git and the image/chart, and new CA/server keys sit untracked under an un-gitignored `secrets/` (5.7, 5.8).
+3. **Add a mutex to `UserMap`** — current code is an unauthenticated crash/data-race, now reachable over both HTTP and MCP (1.7, 1.10).
+4. **Fix `NewSecret`/`Extract`** — nil logger + swallowed errors panic on any keystore issue (1.8).
+5. **Hash passwords** — stop storing/comparing plaintext (5.9).
+6. **Fix machine-specific config paths** — `properties.toml` absolute paths break the container/k8s image (6.10).
+7. **Reconcile path id with body id in `Update`**; stop trusting client-supplied state/ownership (1.6, 2.2, 5.6).
+8. **Authorization/ownership** — scope data per authenticated user; fix JWT context key/role (5.2, 5.10).
+9. Map errors to correct HTTP status codes; stop leaking `err.Error()` (4.1, 5.1).
+10. Add input validation + body size limit / strict decoding (5.4, 4.4).
+11. Add server timeouts and graceful shutdown (5.3, 6.2).
+12. Use `RLock` for todo reads (1.4); fix config error handling (6.7).
+13. Add probes/resources/securityContext + health endpoints (6.5, 6.8); recovery + logging middleware (7.2).
+14. Fix CI Go version (9.2); add unit/handler tests with `-race` (9.1); introduce a service layer (2.1); plan a persistent adapter (3.1).
