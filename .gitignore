@@ -19,8 +19,7 @@ go.work.sum
 .idea/
 .vscode/
 
-# Cursor local files
-.cursor/
+
 
 # Environment files
 .env
