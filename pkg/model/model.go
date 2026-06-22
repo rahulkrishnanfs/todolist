@@ -34,10 +34,10 @@ type (
 	}
 
 	User struct {
-		UID          string `json:"uid"`
-		Username     string `json:"username"`
-		Password     string `json:"password"`
-		EmailAddress string `json:"email_address"`
+		UID          string `json:"uid"           jsonschema:"the user id of the user who signup"`
+		Username     string `json:"username"      jsonschema:"the name of the person who signup"`
+		Password     string `json:"password"      jsonschema:"the password of the person who signup"`
+		EmailAddress string `json:"email_address" jsonschema:"the email address of the person who signup"`
 	}
 )
 
